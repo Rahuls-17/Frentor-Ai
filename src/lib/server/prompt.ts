@@ -65,16 +65,20 @@ export function buildStagePlan(persona: string, clarifyOnly: boolean) {
   const clarify = stageText(persona, "clarify");
   const advise = stageText(persona, "advise");
   const question = stageText(persona, "question");
+
   if (clarifyOnly) {
     return `For this turn, do ONLY: ACK → Clarify.
 - ACK: ${ack}
 - Clarify: ${clarify}
 Ask exactly ONE question total and do NOT add any second question. Do not give advice yet. Keep it ≤ 4–6 short lines.`;
   }
-  return `For this turn, do: ACK → Clarify (brief) → Advise (short) → Question.
+
+  // ✅ Advice turn: DO NOT ask another clarifying question
+  return `For this turn, do: Brief ACK → Advise (short) → Question (end).
 - ACK: ${ack}
-- Clarify: ${clarify}
+- Do NOT ask another clarifying question on this turn.
 - Advise: ${advise}
 - Question: ${question}
 Ask exactly ONE question and place it at the END only. Keep it ≤ 4–6 short lines.`;
 }
+

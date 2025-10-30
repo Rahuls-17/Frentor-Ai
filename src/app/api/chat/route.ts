@@ -6,13 +6,25 @@ import { buildSystemPrompt, buildStagePlan } from "@/lib/server/prompt";
 
 type ChatIn = { session_id: string; message: string; persona?: string; mode?: "friend"|"mentor" };
 
-function needsClarifyFirst(text: string, newTopic: boolean) {
+function needsClarifyFirst(text: string, newTopic: boolean, lastAiShape?: string) {
   const t = (text || "").trim().toLowerCase();
+
+  // If we just clarified, do NOT clarify again — proceed to advice.
+  if (lastAiShape === "clarify") return false;
+
+  // New topic: start with clarify
   if (newTopic) return true;
-  if (t.length < 24) return true;
-  const vague = ["i don't know","not sure","feel bad","i feel","i'm not feeling","im not feeling","dont think","don't think","i am sad","i'm sad","angry at god","god isn't listening","god is not listening"];
-  return vague.some((v)=>t.includes(v));
+
+  // Very short messages can be vague, but don't loop forever
+  if (t.length < 18) return false;
+
+  const vague = [
+    "i don't know","not sure","feel bad","i feel","i'm not feeling","im not feeling",
+    "dont think","don't think","i am sad","i'm sad","angry at god","god isn't listening","god is not listening"
+  ];
+  return vague.some(v => t.includes(v));
 }
+
 
 function enforceOneQuestion(reply: string, clarifyOnly: boolean) {
   if (!reply || !reply.includes("?")) return reply;
@@ -48,7 +60,7 @@ export async function POST(req: NextRequest) {
     const recent = await getRecentTurns(persona, mode, body.session_id, 6);
     const state = await getState(persona, mode, body.session_id);
 
-    const clarifyOnly = needsClarifyFirst(body.message, state.new_topic);
+    const clarifyOnly = needsClarifyFirst(body.message, state.new_topic, state.last_ai_shape as string | undefined);
 
     // System prompt
     const system = buildSystemPrompt(persona, mode, { suppressAutoQuestion: clarifyOnly });
