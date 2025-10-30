@@ -20,12 +20,28 @@ export async function getRecentTurns(
 ): Promise<Turn[]> {
   const k = keyTurns(persona, mode, sessionId);
 
-  // ✅ Each list item is a string JSON entry, not string[]
-  const items = await redis.lrange<string>(k, 0, limit - 1); // or: const items = await redis.lrange(k, 0, limit - 1) as string[];
+  // Upstash REST may return strings or objects (from older writes).
+  const raw = await redis.lrange(k, 0, limit - 1);
+  const items = (raw ?? []) as any[];
 
-  const turns = (items ?? []).map((x: string) => JSON.parse(x)).reverse();
-  return turns.map((it: any) => ({ role: it.role as Turn["role"], content: it.content as string }));
+  const turns = items
+    .map((x) => {
+      if (typeof x === "string") {
+        try { return JSON.parse(x); } catch { return null; }
+      }
+      // already an object?
+      if (x && typeof x === "object" && "role" in x && "content" in x) return x;
+      return null;
+    })
+    .filter(Boolean)
+    .reverse();
+
+  return turns.map((it: any) => ({
+    role: it.role as Turn["role"],
+    content: String(it.content ?? "")
+  }));
 }
+
 
 
 export async function getState(persona: string, mode: string, sessionId: string) {
