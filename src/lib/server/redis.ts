@@ -1,7 +1,9 @@
-import Redis from "ioredis";
+import { Redis } from "@upstash/redis";
 
-const url = process.env.REDIS_URL!;
-export const redis = new Redis(url, { lazyConnect: false });
+export const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
 
 export const REDIS_TTL = Number(process.env.REDIS_TTL_SECONDS || 43200);
 export const REDIS_MAX_TURNS = Number(process.env.REDIS_MAX_TURNS || 12);
