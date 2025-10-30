@@ -1,0 +1,79 @@
+import { redis, REDIS_MAX_TURNS, REDIS_TTL, keyState, keyTurns } from "./redis";
+import { index, ns } from "./pinecone";
+import { openai, EMBED_MODEL } from "./openai";
+
+type Turn = { role: "user"|"assistant"|"system"; content: string };
+
+export async function pushTurn(persona: string, mode: string, sessionId: string, role: Turn["role"], content: string) {
+  const k = keyTurns(persona, mode, sessionId);
+  const entry = JSON.stringify({ t: Date.now()/1000, role, content });
+  await redis.multi()
+    .lpush(k, entry)
+    .ltrim(k, 0, REDIS_MAX_TURNS - 1)
+    .expire(k, REDIS_TTL)
+    .exec();
+}
+
+export async function getRecentTurns(persona: string, mode: string, sessionId: string, limit = REDIS_MAX_TURNS): Promise<Turn[]> {
+  const k = keyTurns(persona, mode, sessionId);
+  const items = await redis.lrange(k, 0, limit - 1);
+  const turns = items.map((x) => JSON.parse(x)).reverse();
+  return turns.map((it) => ({ role: it.role, content: it.content }));
+}
+
+export async function getState(persona: string, mode: string, sessionId: string) {
+  const st = await redis.hgetall(keyState(persona, mode, sessionId));
+  return {
+    last_ai_shape: st.last_ai_shape || null,
+    new_topic: (st.new_topic ?? "true") === "true",
+  };
+}
+
+export async function setState(persona: string, mode: string, sessionId: string, last_ai_shape: string|null, new_topic: boolean) {
+  const k = keyState(persona, mode, sessionId);
+  await redis.multi()
+    .hset(k, "last_ai_shape", last_ai_shape || "", "new_topic", new_topic ? "true" : "false")
+    .expire(k, REDIS_TTL)
+    .exec();
+}
+
+export async function embedOne(text: string): Promise<number[]> {
+  const res = await openai.embeddings.create({ model: EMBED_MODEL, input: text });
+  return (res.data[0].embedding as unknown) as number[];
+}
+
+export async function embedMany(texts: string[]) {
+  const res = await openai.embeddings.create({ model: EMBED_MODEL, input: texts });
+  return res.data.map((d) => (d.embedding as unknown) as number[]);
+}
+
+export async function upsertFacts(persona: string, mode: string, sessionId: string, items: {id: string, text: string, metadata?: Record<string, any>}[]) {
+  if (!items.length) return;
+  const values = await embedMany(items.map((i) => i.text));
+  const toUpsert = items.map((it, i) => ({
+    id: it.id,
+    values: values[i],
+    metadata: {
+      ...it.metadata,
+      persona, mode, session_id: sessionId, text: it.text, timestamp: Date.now()/1000
+    }
+  }));
+  await index().namespace(ns(persona, mode)).upsert(toUpsert);
+}
+
+export async function queryFacts(persona: string, mode: string, sessionId: string, query: string, topK = 3, filterBySession = false, types?: string[]) {
+  const v = await embedOne(query);
+  const flt: Record<string, any> = {};
+  if (filterBySession) flt.session_id = { "$eq": sessionId };
+  if (types?.length) flt.type = { "$in": types };
+  const res = await index().namespace(ns(persona, mode)).query({
+    topK,
+    vector: v,
+    filter: Object.keys(flt).length ? flt : undefined
+  });
+  return res.matches?.map((m) => ({
+    id: m.id,
+    score: m.score,
+    metadata: m.metadata as Record<string, any>
+  })) || [];
+}
