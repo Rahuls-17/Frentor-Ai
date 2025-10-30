@@ -12,12 +12,21 @@ export async function pushTurn(persona: string, mode: string, sessionId: string,
   await redis.expire(k, REDIS_TTL);
 }
 
-export async function getRecentTurns(persona: string, mode: string, sessionId: string, limit = REDIS_MAX_TURNS): Promise<Turn[]> {
+export async function getRecentTurns(
+  persona: string,
+  mode: string,
+  sessionId: string,
+  limit = REDIS_MAX_TURNS
+): Promise<Turn[]> {
   const k = keyTurns(persona, mode, sessionId);
-  const items = await redis.lrange<string[]>(k, 0, limit - 1);
-  const turns = (items || []).map((x) => JSON.parse(x)).reverse();
-  return turns.map((it: any) => ({ role: it.role, content: it.content }));
+
+  // ✅ Each list item is a string JSON entry, not string[]
+  const items = await redis.lrange<string>(k, 0, limit - 1); // or: const items = await redis.lrange(k, 0, limit - 1) as string[];
+
+  const turns = (items ?? []).map((x: string) => JSON.parse(x)).reverse();
+  return turns.map((it: any) => ({ role: it.role as Turn["role"], content: it.content as string }));
 }
+
 
 export async function getState(persona: string, mode: string, sessionId: string) {
   const st = await redis.hgetall<Record<string, string>>(keyState(persona, mode, sessionId));
