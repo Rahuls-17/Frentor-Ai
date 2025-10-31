@@ -1,3 +1,4 @@
+// src/lib/server/prompt.ts
 import fs from "fs";
 import path from "path";
 import YAML from "yaml";

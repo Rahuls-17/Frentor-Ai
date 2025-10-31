@@ -1,3 +1,4 @@
+//"src\app\api\chat\route.ts"
 import { NextRequest, NextResponse } from "next/server";
 import { ensureIndex } from "@/lib/server/pinecone";
 import { CHAT_MODEL, EMBED_DIM, openai } from "@/lib/server/openai";

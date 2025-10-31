@@ -1,3 +1,4 @@
+// src/lib/api.ts
 export type ChatTurn = { role: "user" | "assistant" | "system"; content: string };
 
 export async function sendToBackend(

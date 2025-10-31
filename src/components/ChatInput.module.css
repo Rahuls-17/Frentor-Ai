@@ -1,14 +1,7 @@
-.bar {
-  display: flex; gap: 8px;
-  padding: 12px; background: #fff; border-top: 1px solid #e6e8eb;
-  position: sticky; bottom: 0;
-}
-.input {
-  flex: 1; border: 1px solid #d7dbe0; border-radius: 12px;
-  padding: 10px 12px; outline: none;
-}
-.button {
-  border: none; border-radius: 12px; padding: 10px 16px;
-  background: #1663eb; color: #fff; cursor: pointer;
-}
-.button:hover { filter: brightness(0.95); }
+.wrap { display:flex; gap:.5rem; align-items:center; padding:.5rem; }
+.input { flex:1; padding:.6rem .8rem; border:1px solid #ddd; border-radius:.75rem; }
+.send { padding:.55rem .9rem; border-radius:.75rem; border:1px solid #ddd; background:#fff; }
+.mic { width:42px; height:42px; border-radius:50%; border:1px solid #ddd; background:#fafafa; cursor:pointer; }
+.micActive { width:42px; height:42px; border-radius:50%; border:2px solid #c00; background:#fff0f0; box-shadow:0 0 0 4px rgba(204,0,0,.15) inset; cursor:pointer; }
+.hint { min-width:120px; font-size:.85rem; color:#666; }
+.error { font-size:.8rem; color:#b00; margin-left:.5rem; }

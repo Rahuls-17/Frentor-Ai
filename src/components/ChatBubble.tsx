@@ -1,28 +1,73 @@
-// src/components/ChatBubble.tsx
-import React from "react";
+"use client";
+
+import { useRef, useState } from "react";
 import styles from "./ChatBubble.module.css";
 
-type Props = {
-  role: "user" | "assistant" | "system";
-  content: string;
-};
+export default function ChatBubble({
+  role,
+  text,
+}: {
+  role: "user" | "assistant";
+  text: string;
+}) {
+  const [playing, setPlaying] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
 
-export default function ChatBubble({ role, content }: Props) {
-  const isUser = role === "user";
-  const side = isUser ? styles.end : styles.start;
-  const palette =
-    role === "user"
-      ? styles.user
-      : role === "assistant"
-      ? styles.assistant
-      : styles.system;
+  async function handlePlay() {
+    if (!text) return;
+    try {
+      setPlaying(true);
+      abortRef.current?.abort();
+      abortRef.current = new AbortController();
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+        signal: abortRef.current.signal,
+      });
+      if (!res.ok || !res.body) throw new Error("TTS failed");
+      const audio = new Audio();
+      const buf = await res.arrayBuffer();
+      const blob = new Blob([buf], { type: "audio/mpeg" });
+      audio.src = URL.createObjectURL(blob);
+      await audio.play();
+    } catch {
+      /* ignore */
+    } finally {
+      setPlaying(false);
+    }
+  }
+
+  function handleStop() {
+    try {
+      abortRef.current?.abort();
+    } catch {}
+  }
 
   return (
-    <div className={`${styles.row} ${side}`}>
-      <div className={`${styles.bubble} ${palette}`}>
-        {/* Use a normal div; CSS handles preserving newlines + wrapping */}
-        <div className={styles.content}>{content}</div>
-      </div>
+    <div className={role === "user" ? styles.user : styles.assistant}>
+      <div className={styles.text}>{text}</div>
+      {role === "assistant" && (
+        <div className={styles.controls}>
+          {!playing ? (
+            <button
+              className={styles.playBtn}
+              onClick={handlePlay}
+              aria-label="Play"
+            >
+              ▶
+            </button>
+          ) : (
+            <button
+              className={styles.stopBtn}
+              onClick={handleStop}
+              aria-label="Stop"
+            >
+              ⏹
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

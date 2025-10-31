@@ -1,3 +1,4 @@
+// src/lib/server/memory.ts
 import { redis, REDIS_MAX_TURNS, REDIS_TTL, keyState, keyTurns } from "./redis";
 import { index, ns } from "./pinecone";
 import { openai, EMBED_MODEL } from "./openai";
