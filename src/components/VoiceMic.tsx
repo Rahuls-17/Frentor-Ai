@@ -23,6 +23,7 @@ export default function VoiceMic({
   const [lastUser, setLastUser] = useState("");
   const [lastReply, setLastReply] = useState("");
   const [err, setErr] = useState<string | null>(null);
+
   const recRef = useRef<ReturnType<typeof createRecorder> | null>(null);
   const abortTts = useRef<AbortController | null>(null);
 
@@ -42,7 +43,7 @@ export default function VoiceMic({
         recRef.current = createRecorder({
           mimeType: "audio/webm;codecs=opus",
           vad: { enabled: false }, // manual stop only
-          maxDurationMs: 120000, // optional safety cap
+          maxDurationMs: 120000, // safety cap
         });
       }
       await recRef.current.start();
@@ -95,32 +96,41 @@ export default function VoiceMic({
       setLastReply(reply);
       onTurn?.(transcript, reply);
 
-      // Always auto-speak the reply (no toggle)
       if (reply) {
+        setState("speaking");
+        setHint("Speaking…");
         try {
-          setState("speaking");
-          setHint("Speaking…");
           abortTts.current?.abort();
-          abortTts.current = new AbortController();
+          const ctl = new AbortController();
+          abortTts.current = ctl;
 
-          // Non-stream: get full MP3 then play from the start (prevents skipped intro)
           const res = await fetch("/api/tts", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ text: reply }),
-            signal: abortTts.current.signal,
+            signal: ctl.signal,
           });
+
           if (res.ok) {
             const buf = await res.arrayBuffer();
             const audio = new Audio();
             audio.src = URL.createObjectURL(
               new Blob([buf], { type: "audio/mpeg" })
             );
-            // ensure decode before play to avoid any offset quirks
-            await audio.play();
+
+            await audio.play().catch(() => {
+              // If autoplay fails (rare), prompt the user
+              setErr("Tap to allow audio playback, then try again.");
+            });
+
+            // Wait until the speech actually ends before resetting UI
+            await new Promise<void>((resolve) => {
+              audio.onended = () => resolve();
+              audio.onerror = () => resolve(); // fail-safe
+            });
           }
         } catch {
-          /* ignore speak errors */
+          /* ignore TTS errors */
         }
       }
 
@@ -138,14 +148,22 @@ export default function VoiceMic({
     else if (state === "recording") stopRec();
   }
 
+  const micDisabled =
+    state === "transcribing" ||
+    state === "waiting_reply" ||
+    state === "speaking";
+
   return (
     <div className={styles.centerWrap}>
       <button
         className={state === "recording" ? styles.micActive : styles.mic}
         onClick={onClick}
+        disabled={micDisabled}
+        aria-disabled={micDisabled}
         aria-label={
           state === "recording" ? "Stop recording" : "Start recording"
         }
+        title={micDisabled ? "Please wait…" : undefined}
       >
         <svg
           width="36"
@@ -167,9 +185,11 @@ export default function VoiceMic({
           <path d="M12 18v3" stroke="currentColor" strokeWidth="1.6" />
         </svg>
       </button>
+
       <div className={styles.hint}>
         {state === "recording" ? `Recording… ${sec}s` : hint}
       </div>
+
       {lastUser ? (
         <div className={styles.transcript}>
           <strong>You:</strong> {lastUser}
