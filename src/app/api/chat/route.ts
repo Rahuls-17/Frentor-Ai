@@ -77,9 +77,7 @@ function trimToBudget(text: string, maxWords: number) {
 }
 
 function ensureFollowUpQuestion(text: string) {
-  // If it already ends with a question mark, keep it
   if (/\?\s*$/.test(text)) return text;
-  // Add a concise nudge
   const suffix =
     (text.endsWith(".") || text.endsWith("…") || text.endsWith("!")) ? "" : ".";
   return `${text}${suffix} What’s one small next step you can take?`;
@@ -93,10 +91,10 @@ export async function POST(req: NextRequest) {
       sessionId,
       text,
       figure = "paul",
-      mode = "friend", // "friend" | "mentor" | "study" (study allowed but no stages)
+      mode = "friend", // "friend" | "mentor" | "study"
       answerMode = "human_pov", // "human_pov" | "biblical"
       study, // optional { ref, type }
-      profile, // left as-is (not persisted here per your request)
+      profile, // left as-is
     } = body || {};
 
     if (!sessionId || typeof sessionId !== "string") {
@@ -107,12 +105,10 @@ export async function POST(req: NextRequest) {
       return new Response("Missing text", { status: 400 });
     }
 
-    // ────────────────────────────────────────────────────────────────────────────
     // YAML persona/mode/stages — LOGIC PRESERVED
     // NOTE: stages.yaml is ONLY for friend & mentor (NOT for study)
-    // ────────────────────────────────────────────────────────────────────────────
     const personaYaml = loadYamlFile("persona.yaml");
-    const modeYaml = loadYamlFile(`mode.${mode}.yaml`); // may be null if no file for given mode
+    const modeYaml = loadYamlFile(`mode.${mode}.yaml`);
     const stageYaml =
       mode === "friend" || mode === "mentor" ? loadYamlFile("stages.yaml") : null;
 
@@ -130,9 +126,9 @@ export async function POST(req: NextRequest) {
         ? "Biblical (quote/paraphrase Scripture appropriately)"
         : "Human POV (pastoral guidance)";
 
-    // Length budget: use YAML base and scale for STUDY (no API-level max_tokens needed)
+    // Length budget: use YAML base and scale for STUDY (no API-level max_tokens)
     const baseBudget =
-      (personaYaml?.style?.length_tokens as number) || 140; // from YAML
+      (personaYaml?.style?.length_tokens as number) || 140;
     const lengthBudget =
       mode === "study" ? Math.round(baseBudget * 2.2) : baseBudget;
 
@@ -163,7 +159,7 @@ export async function POST(req: NextRequest) {
       }.`;
     }
 
-    // Profile summary line (left as-is; not persisted here)
+    // Profile summary line
     const prof = profile || {};
     const profSummary = [
       prof.name ? `Name: ${prof.name}` : "",
@@ -184,9 +180,7 @@ export async function POST(req: NextRequest) {
       ? `User profile summary → ${profSummary}`
       : "User profile summary → (none)";
 
-    // ────────────────────────────────────────────────────────────────────────────
-    // Context: Redis recent turns + Pinecone LTM (no profile persistence changes)
-    // ────────────────────────────────────────────────────────────────────────────
+    // Context: Redis recent turns + Pinecone LTM
     const fullHistory = await getSessionHistory(sessionId);
     const recent = Array.isArray(fullHistory) ? fullHistory.slice(-MAX_TURNS) : [];
 
@@ -215,23 +209,23 @@ export async function POST(req: NextRequest) {
       content: `Long-term memory ${i + 1}: ${s}`,
     }));
 
-    // Final message array: persona/profile/study → brevity policy + self-check → stages → LTM → recent → user
+    // Final message array
     const messages: Array<{
       role: "system" | "user" | "assistant";
       content: string;
     }> = [
-      { role: "system", content: personaSystem },
-      { role: "system", content: brevityPolicy }, // 👈 new (length guidance)
-      { role: "system", content: selfCheck },     // 👈 new (self-check)
-      { role: "system", content: profileLine },
-      ...(studyLine ? [{ role: "system", content: studyLine }] : []),
-      ...(stageLine ? [{ role: "system", content: stageLine }] : []),
+      { role: "system" as const, content: personaSystem },
+      { role: "system" as const, content: brevityPolicy },
+      { role: "system" as const, content: selfCheck },
+      { role: "system" as const, content: profileLine },
+      ...(studyLine ? [{ role: "system" as const, content: studyLine }] : []),
+      ...(stageLine ? [{ role: "system" as const, content: stageLine }] : []),
       ...ltmSystemLines,
       ...historyMsgs,
-      { role: "user", content: userText },
+      { role: "user" as const, content: userText },
     ];
 
-    // Call OpenAI (no max_tokens/temperature)
+    // Call OpenAI
     const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
     if (!OPENAI_API_KEY)
       return new Response("Missing OPENAI_API_KEY", { status: 500 });
@@ -263,22 +257,21 @@ export async function POST(req: NextRequest) {
 
     // ---- Server-side length enforcement for Friend/Mentor only ----
     if (mode !== "study") {
-      // Rough word budget ~ 1.3 * token budget (heuristic)
       const maxWords = Math.round(lengthBudget * 1.3);
       reply = trimToBudget(reply, maxWords);
       reply = ensureFollowUpQuestion(reply);
     }
 
-    // Persist turns to Redis
-    await pushTurn(sessionId, { role: "user", content: userText, ts: Date.now() });
-    await pushTurn(sessionId, { role: "assistant", content: reply, ts: Date.now() });
+    // Persist turns to Redis (removed `ts` to satisfy ChatTurn type)
+    await pushTurn(sessionId, { role: "user", content: userText });
+    await pushTurn(sessionId, { role: "assistant", content: reply });
 
-    // Touch lastActive (unchanged)
+    // Touch lastActive
     const lastActiveKey = `session:${sessionId}:lastActive`;
     await redis.set(lastActiveKey, Date.now().toString());
     await redis.expire(lastActiveKey, 60 * 60 * 24 * 7);
 
-    // Rolling summary every N messages (unchanged cadence)
+    // Rolling summary every N messages
     const turns = await getSessionHistory(sessionId);
     if (Array.isArray(turns) && turns.length % SUMMARY_MESSAGE_COUNT === 0) {
       const rawText = turns
@@ -297,12 +290,12 @@ export async function POST(req: NextRequest) {
 
       const summaryMessages = [
         {
-          role: "system",
+          role: "system" as const,
           content:
             "You are a helpful assistant that summarizes conversations briefly.",
         },
         {
-          role: "user",
+          role: "user" as const,
           content: `Summarize the following dialog in 4–6 bullets:\n\n${rawText}`,
         },
       ];
