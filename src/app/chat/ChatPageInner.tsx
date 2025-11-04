@@ -280,8 +280,93 @@ export default function ChatPageInner() {
   return (
     <div className={styles.wrap}>
       <header className={styles.header}>
-        {/* same header, controls, and study bar UI */}
-        {/* unchanged UI logic */}
+        <div className={styles.headerInner}>
+          <div className={styles.titleBox}>
+            <h1 className={styles.title}>Frentor Chat</h1>
+            <p className={styles.sub}>
+              Persona: Saint Paul • Mode: {currentMode.toUpperCase()} • Answer:{" "}
+              {answerMode === "human_pov" ? "Human POV" : "Biblical POV"}
+            </p>
+          </div>
+
+          <div className={styles.controls}>
+            <div className={styles.modeToggle} role="tablist">
+              {(["friend", "mentor", "study"] as Mode[]).map((m) => (
+                <button
+                  key={m}
+                  role="tab"
+                  aria-selected={currentMode === m}
+                  className={`${styles.toggleBtn} ${
+                    currentMode === m ? styles.toggleBtnActive : ""
+                  }`}
+                  onClick={() => setCurrentMode(m)}
+                >
+                  {m[0].toUpperCase() + m.slice(1)}
+                </button>
+              ))}
+            </div>
+
+            <div className={styles.smallToggle}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={answerMode === "biblical"}
+                  onChange={(e) =>
+                    setAnswerMode(e.target.checked ? "biblical" : "human_pov")
+                  }
+                />{" "}
+                Biblical POV
+              </label>
+            </div>
+
+            <Link href="/profile" className={styles.profileBtn}>
+              <svg
+                className={styles.profileIcon}
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="12" cy="8" r="4"></circle>
+                <path d="M6 20c0-3.333 3-6 6-6s6 2.667 6 6"></path>
+              </svg>
+              <span className={styles.profileText}>Profile</span>
+            </Link>
+          </div>
+        </div>
+
+        {currentMode === "study" && (
+          <div className={styles.studyBar}>
+            <div className={styles.studyRow}>
+              <input
+                className={styles.studyInput}
+                value={studyBook ?? ""}
+                onChange={(e) => setStudyBook(e.target.value ?? "")}
+                placeholder="Book (e.g., Philippians)"
+              />
+              <input
+                className={styles.studyInputSmall}
+                value={studyChapter ?? ""}
+                onChange={(e) => setStudyChapter(e.target.value ?? "")}
+                placeholder="Chapter (e.g., 2)"
+              />
+              <input
+                className={styles.studyInputSmall}
+                value={studyVerses ?? ""}
+                onChange={(e) => setStudyVerses(e.target.value ?? "")}
+                placeholder="Verse(s) (e.g., 1-11)"
+              />
+            </div>
+            <div className={styles.studyHint}>
+              Tip: Press Send with an empty box to start a study on {studyRef}.
+            </div>
+          </div>
+        )}
       </header>
 
       <main className={styles.main}>
