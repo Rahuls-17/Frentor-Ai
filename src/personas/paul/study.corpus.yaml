@@ -1,0 +1,24 @@
+# src/personas/paul/study.corpus.yaml
+passages:
+  - ref: "Philippians 2:1-11"
+    ref_lc: "philippians 2:1-11"
+    text: |
+      1 So if there is any encouragement in Christ, any comfort from love, any participation in the Spirit...
+      5 Have this mind among yourselves, which is yours in Christ Jesus,
+      6 who, though he was in the form of God, did not count equality with God a thing to be grasped,
+      7 but emptied himself...
+      11 and every tongue confess that Jesus Christ is Lord, to the glory of God the Father.
+    notes: |
+      Theme: Christlike humility. Paul presents Christ’s humiliation and exaltation
+      as the pattern for Christian community life. The “mind of Christ” is self-giving love.
+      Application: choose downward mobility for others’ good; unity grows from humility.
+
+  - ref: "James 2:14-17"
+    ref_lc: "james 2:14-17"
+    text: |
+      14 What good is it, my brothers, if someone says he has faith but does not have works? ...
+      17 So also faith by itself, if it does not have works, is dead.
+    notes: |
+      Tension: Paul and James aren’t enemies—James addresses lifeless “faith”
+      that never acts; Paul rejects earning salvation by works.
+      Application: credible faith expresses itself in mercy and practical care.

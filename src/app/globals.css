@@ -1,0 +1,83 @@
+/* src/app/globals.css */
+
+/* Reset default margins and fonts */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Set global background and font */
+html, body {
+  height: 100%;
+  background-color: #f7f7f8;
+  color: #222;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+}
+
+/* Chat container styling */
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1rem;
+  background-color: #ffffff;
+  border-radius: 1rem;
+  box-shadow: 0 0 20px rgba(0,0,0,0.05);
+}
+
+/* Message bubbles */
+.bubble-user {
+  background-color: #e7f1ff;
+  color: #0b2447;
+  align-self: flex-end;
+  border-radius: 1rem 1rem 0 1rem;
+  padding: 0.75rem 1rem;
+  max-width: 80%;
+  margin-top: 0.5rem;
+}
+
+.bubble-assistant {
+  background-color: #f1f0f0;
+  color: #222;
+  align-self: flex-start;
+  border-radius: 1rem 1rem 1rem 0;
+  padding: 0.75rem 1rem;
+  max-width: 80%;
+  margin-top: 0.5rem;
+}
+
+/* Chat input area */
+.chat-input {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: auto;
+  border-top: 1px solid #ddd;
+  background-color: #fff;
+  padding: 0.75rem;
+}
+
+.chat-input input {
+  flex: 1;
+  padding: 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 0.75rem;
+  font-size: 1rem;
+}
+
+.chat-input button {
+  padding: 0.75rem 1.25rem;
+  background-color: #0b57d0;
+  color: #fff;
+  border: none;
+  border-radius: 0.75rem;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.chat-input button:hover {
+  background-color: #094cb4;
+}

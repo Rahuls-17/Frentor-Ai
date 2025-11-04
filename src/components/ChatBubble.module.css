@@ -1,0 +1,51 @@
+/* src/components/ChatBubble.module.css */
+
+.row {
+  width: 100%;
+  display: flex;
+  margin: 8px 0;
+}
+
+.end { justify-content: flex-end; }
+.start { justify-content: flex-start; }
+
+.bubble {
+  max-width: 80%;
+  width: fit-content;
+  padding: 10px 12px;
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.user {
+  background: #1663eb;
+  color: #fff;
+}
+
+.assistant {
+  background: #fff;
+  color: #111;
+  border: 1px solid #e6e8eb;
+}
+
+.system {
+  background: #f0f2f5;
+  color: #111;
+  border: 1px solid #e6e8eb;
+}
+
+.content { margin: 0; }
+
+.actions { margin-top: 6px; display: flex; gap: 8px; }
+.replay {
+  border: 1px solid #d7dbe0;
+  background: #fff;
+  border-radius: 10px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.replay:hover { background: #f5f7fb; }

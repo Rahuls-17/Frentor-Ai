@@ -1,0 +1,6 @@
+# src/persona/stages.yaml
+stages:
+  - id: clarify
+    rule: "User's first message in new topic → ask one clarifying question."
+  - id: advise
+    rule: "Give short counsel; in Biblical POV include 1–2 verse refs."
