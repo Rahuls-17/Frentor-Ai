@@ -1,4 +1,5 @@
 // src/components/ChatBubble.tsx
+// src/components/ChatBubble.tsx
 "use client";
 import React from "react";
 import styles from "./ChatBubble.module.css";
@@ -6,10 +7,9 @@ import styles from "./ChatBubble.module.css";
 type Props = {
   role: "user" | "assistant" | "system";
   content: string;
-  audioUrl?: string | null;
 };
 
-export default function ChatBubble({ role, content, audioUrl }: Props) {
+export default function ChatBubble({ role, content }: Props) {
   const isUser = role === "user";
   const side = isUser ? styles.end : styles.start;
   const palette =
@@ -23,16 +23,6 @@ export default function ChatBubble({ role, content, audioUrl }: Props) {
     <div className={`${styles.row} ${side}`}>
       <div className={`${styles.bubble} ${palette}`}>
         <div className={styles.content}>{content}</div>
-        {role === "assistant" && audioUrl ? (
-          <div className={styles.actions}>
-            <button
-              className={styles.replay}
-              onClick={() => new Audio(audioUrl).play()}
-            >
-              🔁 Replay
-            </button>
-          </div>
-        ) : null}
       </div>
     </div>
   );

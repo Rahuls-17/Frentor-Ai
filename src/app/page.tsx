@@ -1,4 +1,5 @@
 // src/app/page.tsx
+// src/app/page.tsx
 "use client";
 
 import { useRouter } from "next/navigation";
@@ -21,7 +22,7 @@ export default function LandingPage() {
           <div className={styles.titleBox}>
             <h1 className={styles.title}>Choose your mentor</h1>
             <p className={styles.sub}>
-              Start a voice-first conversation (for now: Saint Paul)
+              Start a conversation (Saint Paul available now)
             </p>
           </div>
         </div>

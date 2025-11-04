@@ -1,40 +1,103 @@
-export const runtime = "nodejs";
-
+// src/app/api/chat/route.ts
+import fs from "fs";
+import path from "path";
+import yaml from "js-yaml";
 import { NextRequest } from "next/server";
+import { redis } from "@/lib/server/redis";
+import {
+  getSessionHistory,
+  pushTurn,
+  fetchRelevantSummaries,
+  upsertSummary,
+} from "@/lib/server/memory";
 
-/**
- * POST /api/chat
- * body: {
- *   sessionId: string;
- *   text: string;
- *   figure: "paul";
- *   mode: "friend" | "mentor" | "study";
- *   answerMode: "human_pov" | "biblical";
- *   autospeak: boolean;
- *   study?: { ref?: string; type?: "sermon" | "qna" }
- * }
- * returns: { reply: string; audioUrl?: string }
- */
+// Limits for contextualization
+const MAX_TURNS = 12; // last N turns from Redis
+const MAX_LTM = 3; // top-K Pinecone summaries
+const SUMMARY_MESSAGE_COUNT = 10; // unchanged cadence
+
+// Persona assets location (adjust if your repo differs)
+const PERSONAS_DIR = path.resolve(process.cwd(), "src/personas/paul");
+
+function loadYamlFile(filename: string): any {
+  try {
+    const p = path.join(PERSONAS_DIR, filename);
+    if (!fs.existsSync(p)) return null;
+    const content = fs.readFileSync(p, "utf8");
+    return yaml.load(content);
+  } catch {
+    return null;
+  }
+}
+
+function buildStageLine(stageYaml: any): string {
+  if (!stageYaml) return "";
+  // Try common schema: { stages: [{ name, goal/description/brief }, ...] }
+  const stages = (stageYaml as any)?.stages;
+  if (Array.isArray(stages) && stages.length) {
+    const items = stages.slice(0, 8).map((s: any, i: number) => {
+      const name = typeof s?.name === "string" ? s.name : `Stage ${i + 1}`;
+      const detail =
+        (typeof s?.brief === "string" && s.brief) ||
+        (typeof s?.description === "string" && s.description) ||
+        (typeof s?.goal === "string" && s.goal) ||
+        "";
+      const compact = detail.length > 160 ? detail.slice(0, 157) + "…" : detail;
+      return `${i + 1}. ${name}${compact ? ` — ${compact}` : ""}`;
+    });
+    return `Follow this conversation stage plan. If the user changes topics, adapt but try to keep momentum.\n${items.join(
+      "\n"
+    )}`;
+  }
+  // Fallback: include a compact JSON dump (capped) without blowing up the prompt
+  const dumped = JSON.stringify(stageYaml);
+  const compact = dumped.length > 1200 ? dumped.slice(0, 1197) + "…" : dumped;
+  return `Conversation stages (schema-detected): ${compact}`;
+}
+
+/** ---- Small helpers for post-trim (Friend/Mentor only) ---- **/
+function trimToBudget(text: string, maxWords: number) {
+  const sentences = text.split(/(?<=[.?!])\s+/);
+  const out: string[] = [];
+  let count = 0;
+  for (const s of sentences) {
+    const words = s.trim().split(/\s+/).filter(Boolean);
+    const w = words.length;
+    if (w === 0) continue;
+    if (count + w > maxWords) break;
+    out.push(s.trim());
+    count += w;
+  }
+  // If nothing fit (first sentence too long), hard trim first ~maxWords words
+  if (out.length === 0) {
+    const words = text.split(/\s+/).filter(Boolean).slice(0, maxWords);
+    return words.join(" ");
+  }
+  return out.join(" ");
+}
+
+function ensureFollowUpQuestion(text: string) {
+  // If it already ends with a question mark, keep it
+  if (/\?\s*$/.test(text)) return text;
+  // Add a concise nudge
+  const suffix =
+    (text.endsWith(".") || text.endsWith("…") || text.endsWith("!")) ? "" : ".";
+  return `${text}${suffix} What’s one small next step you can take?`;
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json().catch(() => ({}));
+    const body = await req.json();
+
     const {
       sessionId,
       text,
-      figure,
-      mode,
-      answerMode,
-      autospeak,
-      study,
-    } = body as {
-      sessionId?: string;
-      text?: string;
-      figure?: string;
-      mode?: "friend" | "mentor" | "study";
-      answerMode?: "human_pov" | "biblical";
-      autospeak?: boolean;
-      study?: { ref?: string; type?: "sermon" | "qna" };
-    };
+      figure = "paul",
+      mode = "friend", // "friend" | "mentor" | "study" (study allowed but no stages)
+      answerMode = "human_pov", // "human_pov" | "biblical"
+      study, // optional { ref, type }
+      profile, // left as-is (not persisted here per your request)
+    } = body || {};
 
     if (!sessionId || typeof sessionId !== "string") {
       return new Response("Missing sessionId", { status: 400 });
@@ -44,66 +107,229 @@ export async function POST(req: NextRequest) {
       return new Response("Missing text", { status: 400 });
     }
 
-    // --- 1) Build your prompt & call your chat model (placeholder) ---
-    // You already have the logic wired in your project to produce `reply`.
-    // Keep your existing GPT call here; we just simulate a reply for clarity.
-    // ----------------------------------------------------------------
-    const reply = await generateReply({
-      sessionId,
-      userText,
-      figure: figure || "paul",
-      mode: mode || "friend",
-      answerMode: answerMode || "human_pov",
-      study,
+    // ────────────────────────────────────────────────────────────────────────────
+    // YAML persona/mode/stages — LOGIC PRESERVED
+    // NOTE: stages.yaml is ONLY for friend & mentor (NOT for study)
+    // ────────────────────────────────────────────────────────────────────────────
+    const personaYaml = loadYamlFile("persona.yaml");
+    const modeYaml = loadYamlFile(`mode.${mode}.yaml`); // may be null if no file for given mode
+    const stageYaml =
+      mode === "friend" || mode === "mentor" ? loadYamlFile("stages.yaml") : null;
+
+    const personaName =
+      (personaYaml && (personaYaml as any).name) || "Saint Paul";
+    const personaDescription =
+      (personaYaml && (personaYaml as any).description) ||
+      "warm, concise, pastoral";
+
+    const modeDescription =
+      (modeYaml && (modeYaml as any).description) || mode.toUpperCase();
+
+    const answerPerspective =
+      answerMode === "biblical"
+        ? "Biblical (quote/paraphrase Scripture appropriately)"
+        : "Human POV (pastoral guidance)";
+
+    // Length budget: use YAML base and scale for STUDY (no API-level max_tokens needed)
+    const baseBudget =
+      (personaYaml?.style?.length_tokens as number) || 140; // from YAML
+    const lengthBudget =
+      mode === "study" ? Math.round(baseBudget * 2.2) : baseBudget;
+
+    const personaSystem = `You are "${personaName}"—${personaDescription}.
+- Persona: ${figure}
+- Mode: ${modeDescription}
+- Answer perspective: ${answerPerspective}
+- Keep replies brief (4–7 sentences). End with ONE short follow-up question.`;
+
+    const brevityPolicy = [
+      `Answer-Length Budget: ~${lengthBudget} tokens.`,
+      mode === "study"
+        ? `In STUDY mode you may exceed the budget only for brief scripture quotations or necessary exegesis.`
+        : `In ${mode.toUpperCase()} mode, keep replies tight and practical.`,
+      `Prefer 1–3 short bullets for lists.`,
+    ].join(" ");
+
+    const selfCheck =
+      "Before finalizing, quickly self-check: is the reply within the Answer-Length Budget and ending with ONE short follow-up question? If not, compress.";
+
+    const stageLine = buildStageLine(stageYaml);
+
+    // Optional study context string; stages.yaml is not used for study mode
+    let studyLine = "";
+    if (mode === "study" && study?.ref) {
+      studyLine = `Study context: ${study.ref}${
+        study?.type ? ` (${String(study.type).toUpperCase()})` : ""
+      }.`;
+    }
+
+    // Profile summary line (left as-is; not persisted here)
+    const prof = profile || {};
+    const profSummary = [
+      prof.name ? `Name: ${prof.name}` : "",
+      prof.age ? `Age: ${prof.age}` : "",
+      prof.country ? `Country: ${prof.country}` : "",
+      prof.journaling ? `Journal: ${prof.journaling}` : "",
+      Array.isArray(prof.goals) && prof.goals.length
+        ? `Goals: ${prof.goals.join(", ")}`
+        : "",
+      Array.isArray(prof.pastActivities) && prof.pastActivities.length
+        ? `Past: ${prof.pastActivities.join(", ")}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("  ·  ");
+
+    const profileLine = profSummary
+      ? `User profile summary → ${profSummary}`
+      : "User profile summary → (none)";
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // Context: Redis recent turns + Pinecone LTM (no profile persistence changes)
+    // ────────────────────────────────────────────────────────────────────────────
+    const fullHistory = await getSessionHistory(sessionId);
+    const recent = Array.isArray(fullHistory) ? fullHistory.slice(-MAX_TURNS) : [];
+
+    const historyMsgs: Array<{
+      role: "system" | "user" | "assistant";
+      content: string;
+    }> = recent
+      .map((t: any) => {
+        const role =
+          t?.role === "user" || t?.role === "assistant" || t?.role === "system"
+            ? t.role
+            : "user";
+        const content =
+          typeof t?.content === "string"
+            ? t.content
+            : JSON.stringify(t?.content ?? "");
+        return { role, content };
+      })
+      .filter((m) => m.content && m.content.trim().length > 0);
+
+    const ltm = await fetchRelevantSummaries(sessionId, userText, MAX_LTM);
+    const ltmSystemLines: Array<{ role: "system"; content: string }> = (
+      ltm || []
+    ).map((s: string, i: number) => ({
+      role: "system",
+      content: `Long-term memory ${i + 1}: ${s}`,
+    }));
+
+    // Final message array: persona/profile/study → brevity policy + self-check → stages → LTM → recent → user
+    const messages: Array<{
+      role: "system" | "user" | "assistant";
+      content: string;
+    }> = [
+      { role: "system", content: personaSystem },
+      { role: "system", content: brevityPolicy }, // 👈 new (length guidance)
+      { role: "system", content: selfCheck },     // 👈 new (self-check)
+      { role: "system", content: profileLine },
+      ...(studyLine ? [{ role: "system", content: studyLine }] : []),
+      ...(stageLine ? [{ role: "system", content: stageLine }] : []),
+      ...ltmSystemLines,
+      ...historyMsgs,
+      { role: "user", content: userText },
+    ];
+
+    // Call OpenAI (no max_tokens/temperature)
+    const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+    if (!OPENAI_API_KEY)
+      return new Response("Missing OPENAI_API_KEY", { status: 500 });
+    const model = process.env.OPENAI_MODEL || "gpt-5";
+
+    const oaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ model, messages }),
     });
 
-    // --- 2) Try to pre-generate TTS so UI can autoplay ---
-    // We call our own /api/tts (non-stream) and return a data:audio/mpeg URL.
-    let audioUrl: string | undefined;
-    if (autospeak) {
-      try {
-        // Build an absolute base URL from incoming request
-        const origin =
-          process.env.NEXT_PUBLIC_BASE_URL ||
-          `${req.nextUrl.protocol}//${req.headers.get("host")}`;
+    if (!oaiRes.ok) {
+      const errTxt = await oaiRes.text().catch(() => "");
+      return new Response(
+        JSON.stringify({
+          reply: "",
+          error: `OpenAI ${oaiRes.status}: ${errTxt || oaiRes.statusText}`,
+        }),
+        { status: 502, headers: { "content-type": "application/json" } }
+      );
+    }
 
-        const ttsRes = await fetch(`${origin}/api/tts`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: reply }),
-        });
+    const oaiJson: any = await oaiRes.json().catch(() => ({}));
+    let reply: string =
+      oaiJson?.choices?.[0]?.message?.content?.trim() || "(no reply)";
 
-        if (!ttsRes.ok) {
-          const errTxt = await ttsRes.text().catch(() => "");
-          console.warn(`[chat] /api/tts failed ${ttsRes.status}: ${errTxt}`);
-        } else {
-          const buf = await ttsRes.arrayBuffer();
-          const b64 = Buffer.from(buf).toString("base64");
-          audioUrl = `data:audio/mpeg;base64,${b64}`;
-          console.log(`[chat] TTS generated (${(buf.byteLength / 1024).toFixed(1)} KB)`);
+    // ---- Server-side length enforcement for Friend/Mentor only ----
+    if (mode !== "study") {
+      // Rough word budget ~ 1.3 * token budget (heuristic)
+      const maxWords = Math.round(lengthBudget * 1.3);
+      reply = trimToBudget(reply, maxWords);
+      reply = ensureFollowUpQuestion(reply);
+    }
+
+    // Persist turns to Redis
+    await pushTurn(sessionId, { role: "user", content: userText, ts: Date.now() });
+    await pushTurn(sessionId, { role: "assistant", content: reply, ts: Date.now() });
+
+    // Touch lastActive (unchanged)
+    const lastActiveKey = `session:${sessionId}:lastActive`;
+    await redis.set(lastActiveKey, Date.now().toString());
+    await redis.expire(lastActiveKey, 60 * 60 * 24 * 7);
+
+    // Rolling summary every N messages (unchanged cadence)
+    const turns = await getSessionHistory(sessionId);
+    if (Array.isArray(turns) && turns.length % SUMMARY_MESSAGE_COUNT === 0) {
+      const rawText = turns
+        .map((t: any) =>
+          `${t.role === "user"
+            ? "User"
+            : t.role === "assistant"
+            ? "Assistant"
+            : "System"}: ${
+            typeof t.content === "string"
+              ? t.content
+              : JSON.stringify(t.content)
+          }`
+        )
+        .join("\n");
+
+      const summaryMessages = [
+        {
+          role: "system",
+          content:
+            "You are a helpful assistant that summarizes conversations briefly.",
+        },
+        {
+          role: "user",
+          content: `Summarize the following dialog in 4–6 bullets:\n\n${rawText}`,
+        },
+      ];
+
+      const summaryRes = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ model, messages: summaryMessages }),
+      });
+
+      if (summaryRes.ok) {
+        const summaryJson: any = await summaryRes.json().catch(() => ({}));
+        const summaryText: string =
+          summaryJson?.choices?.[0]?.message?.content?.trim() || "";
+        if (summaryText) {
+          await upsertSummary(sessionId, summaryText, "session-summary");
         }
-      } catch (e: any) {
-        console.warn("[chat] TTS error:", e?.message || e);
       }
     }
 
-    return new Response(JSON.stringify({ reply, audioUrl }), {
+    return new Response(JSON.stringify({ reply }), {
       headers: { "content-type": "application/json" },
     });
   } catch (e: any) {
     return new Response(e?.message || "Server error", { status: 500 });
   }
-}
-
-/** Replace this with your existing GPT call */
-async function generateReply(args: {
-  sessionId: string;
-  userText: string;
-  figure: string;
-  mode: "friend" | "mentor" | "study";
-  answerMode: "human_pov" | "biblical";
-  study?: { ref?: string; type?: "sermon" | "qna" };
-}) {
-  // TODO: call your real OpenAI logic; keeping a short echo for now.
-  return `You said: ${args.userText}`;
 }

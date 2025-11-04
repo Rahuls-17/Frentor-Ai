@@ -1,326 +1,230 @@
-// src/app/profile/page.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import styles from "./page.module.css";
 
-type Profile = {
-  id?: string;
+type ProfileData = {
   name: string;
-  age_range: string;
+  age: string; // keep as string for easy input handling
   country: string;
-  denom_pref: string;
-  goals: string[]; // stored as array; edited as comma-separated string
+  journaling: string;
+  goals: string[]; // one goal per line
+  pastActivities: string[]; // one activity per line
 };
 
-const DEFAULT_PROFILE: Profile = {
-  id: "demo-user",
-  name: "Rahul Singh",
-  age_range: "25–34",
+const LS_KEY = "frentor.profile.v1";
+
+const DEFAULT_PROFILE: ProfileData = {
+  name: "John Doe",
+  age: "28",
   country: "India",
-  denom_pref: "Evangelical",
-  goals: ["Understand purpose of life", "Grow in gratitude"],
+  journaling:
+    "I want to grow in patience and learn to love others like Christ. Help me build a daily habit.",
+  goals: [
+    "Read 1 chapter daily",
+    "Weekly reflection on purpose",
+    "Pray morning & evening",
+  ],
+  pastActivities: [
+    "Mentor chat (Paul) — Purpose of life",
+    "Study — Philippians 2:1-11 (Q&A)",
+    "Friend chat — dealing with stress",
+  ],
 };
 
 export default function ProfilePage() {
-  const [profile, setProfile] = useState<Profile>(DEFAULT_PROFILE);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<ProfileData>(DEFAULT_PROFILE);
+  const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [savedTick, setSavedTick] = useState(0);
 
-  // Local editable string for goals to avoid uncontrolled flips
-  const goalsString = useMemo(
-    () =>
-      profile.goals && Array.isArray(profile.goals)
-        ? profile.goals.join(", ")
-        : "",
-    [profile.goals]
-  );
-
-  // Keep an AbortController to cancel in-flight requests on unmount / route change
-  const loadControllerRef = useRef<AbortController | null>(null);
-  const saveControllerRef = useRef<AbortController | null>(null);
-  const mountedRef = useRef(true);
-
+  // Load from localStorage on mount
   useEffect(() => {
-    mountedRef.current = true;
-
-    const controller = new AbortController();
-    loadControllerRef.current = controller;
-
-    (async () => {
-      try {
-        setLoading(true);
-        setError(null);
-
-        const res = await fetch("/api/history?profile=true", {
-          method: "GET",
-          signal: controller.signal,
-          cache: "no-store",
-        });
-
-        if (!res.ok) throw new Error(await res.text());
-        const p = (await res.json()) as Partial<Profile> | null;
-
-        if (!mountedRef.current) return;
-
-        // Merge with defaults to guarantee controlled values
-        const merged: Profile = {
-          ...DEFAULT_PROFILE,
-          ...(p ?? {}),
-          // normalize shapes
-          name: (p?.name ?? DEFAULT_PROFILE.name) as string,
-          age_range: (p?.age_range ?? DEFAULT_PROFILE.age_range) as string,
-          country: (p?.country ?? DEFAULT_PROFILE.country) as string,
-          denom_pref: (p?.denom_pref ?? DEFAULT_PROFILE.denom_pref) as string,
-          goals: Array.isArray(p?.goals)
-            ? (p!.goals as string[])
-            : typeof (p as any)?.goals === "string"
-            ? ((p as any).goals as string)
-                .split(",")
-                .map((s: string) => s.trim())
-                .filter(Boolean)
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setData({
+          name: parsed?.name ?? DEFAULT_PROFILE.name,
+          age: parsed?.age ?? DEFAULT_PROFILE.age,
+          country: parsed?.country ?? DEFAULT_PROFILE.country,
+          journaling: parsed?.journaling ?? DEFAULT_PROFILE.journaling,
+          goals: Array.isArray(parsed?.goals)
+            ? parsed.goals
             : DEFAULT_PROFILE.goals,
-        };
-
-        setProfile(merged);
-      } catch (e: any) {
-        if (e?.name === "AbortError") return;
-        if (!mountedRef.current) return;
-        setError(e?.message || "Failed to load profile");
-      } finally {
-        if (mountedRef.current) setLoading(false);
+          pastActivities: Array.isArray(parsed?.pastActivities)
+            ? parsed.pastActivities
+            : DEFAULT_PROFILE.pastActivities,
+        });
       }
-    })();
-
-    return () => {
-      mountedRef.current = false;
-      try {
-        loadControllerRef.current?.abort();
-      } catch {}
-    };
+    } catch {
+      // ignore, stick to defaults
+    } finally {
+      setLoaded(true);
+    }
   }, []);
 
-  async function onSave() {
-    if (saving) return;
-
-    const controller = new AbortController();
-    saveControllerRef.current = controller;
-
+  function save() {
+    setSaving(true);
     try {
-      setSaving(true);
-      setError(null);
-
-      // Normalize to a clean payload
-      const payload: Profile = {
-        id: profile.id ?? "demo-user",
-        name: profile.name ?? "",
-        age_range: profile.age_range ?? "",
-        country: profile.country ?? "",
-        denom_pref: profile.denom_pref ?? "",
-        goals: Array.isArray(profile.goals)
-          ? profile.goals
-          : (profile.goals as any)
-              ?.toString()
-              ?.split(",")
-              ?.map((s: string) => s.trim()) ?? [],
-      };
-
-      const res = await fetch("/api/history?profile=true", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-
-      if (!res.ok) throw new Error(await res.text());
-      // Optionally show a subtle confirmation
-      alert("Profile saved.");
-    } catch (e: any) {
-      if (e?.name === "AbortError") return;
-      setError(e?.message || "Failed to save profile");
+      localStorage.setItem(LS_KEY, JSON.stringify(data));
+      // nice little saved tick
+      setSavedTick((x) => x + 1);
     } finally {
       setSaving(false);
     }
   }
 
+  // controlled inputs
+  const setField = <K extends keyof ProfileData>(
+    key: K,
+    value: ProfileData[K]
+  ) => {
+    setData((d) => ({ ...d, [key]: value }));
+  };
+
+  // textarea <-> array helpers
+  const goalsText = (data.goals || []).join("\n");
+  const activitiesText = (data.pastActivities || []).join("\n");
+
   return (
-    <main style={{ maxWidth: 720, margin: "0 auto", padding: 16 }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          marginBottom: 12,
-        }}
-      >
-        <h1 style={{ fontSize: 20, margin: 0 }}>Profile</h1>
-        <Link href="/chat">← Back to chat</Link>
-      </div>
+    <div className={styles.wrap}>
+      <header className={styles.header}>
+        <div className={styles.headerInner}>
+          <div className={styles.titleBox}>
+            <h1 className={styles.title}>Profile</h1>
+            <p className={styles.sub}>
+              These are the only profile fields stored. You can edit and save
+              anytime.
+            </p>
+          </div>
 
-      {error && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: 10,
-            borderRadius: 8,
-            border: "1px solid #f1c0c0",
-            background: "#fff5f5",
-            color: "#a11212",
-            fontSize: 13,
-          }}
-        >
-          {error}
+          <div className={styles.actions}>
+            <Link href="/chat?figure=paul" className={styles.backBtn}>
+              ← Back to Chat
+            </Link>
+            <button
+              className={styles.saveBtn}
+              onClick={save}
+              disabled={!loaded || saving}
+              aria-live="polite"
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
         </div>
-      )}
+      </header>
 
-      <div
-        style={{
-          display: "grid",
-          gap: 10,
-          background: "#fff",
-          border: "1px solid #e6e8eb",
-          padding: 14,
-          borderRadius: 12,
-          opacity: loading ? 0.7 : 1,
-          pointerEvents: loading ? "none" : "auto",
-        }}
-      >
-        <label>
-          <div style={{ marginBottom: 4 }}>Name</div>
-          <input
-            type="text"
-            value={profile.name ?? ""} // controlled fallback
-            onChange={(e) =>
-              setProfile((p) => ({ ...p, name: e.target.value }))
-            }
-            style={{
-              width: "100%",
-              padding: 8,
-              borderRadius: 8,
-              border: "1px solid #d7dbe0",
-            }}
+      <main className={styles.main}>
+        <section className={styles.card}>
+          <h3 className={styles.cardTitle}>Basics</h3>
+          <div className={styles.formGrid}>
+            <div className={styles.field}>
+              <label className={styles.label}>Name</label>
+              <input
+                className={styles.input}
+                value={data.name}
+                onChange={(e) => setField("name", e.target.value)}
+                placeholder="Your name"
+              />
+            </div>
+
+            <div className={styles.field}>
+              <label className={styles.label}>Age</label>
+              <input
+                className={styles.input}
+                inputMode="numeric"
+                value={data.age}
+                onChange={(e) => {
+                  // keep only digits
+                  const onlyDigits = e.target.value.replace(/[^\d]/g, "");
+                  setField("age", onlyDigits);
+                }}
+                placeholder="Age"
+              />
+            </div>
+
+            <div className={styles.field}>
+              <label className={styles.label}>Country</label>
+              <select
+                className={styles.select}
+                value={data.country}
+                onChange={(e) => setField("country", e.target.value)}
+              >
+                {/* small, safe list — extend later if needed */}
+                <option>India</option>
+                <option>United States</option>
+                <option>United Kingdom</option>
+                <option>Singapore</option>
+                <option>Canada</option>
+                <option>Australia</option>
+                <option>Other</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section className={styles.card}>
+          <h3 className={styles.cardTitle}>Journaling</h3>
+          <textarea
+            className={styles.textarea}
+            rows={6}
+            value={data.journaling}
+            onChange={(e) => setField("journaling", e.target.value)}
+            placeholder="Your personal reflections, prayers, or faith journey notes…"
           />
-        </label>
+        </section>
 
-        <label>
-          <div style={{ marginBottom: 4 }}>Age range</div>
-          <input
-            type="text"
-            value={profile.age_range ?? ""} // controlled fallback
+        <section className={styles.card}>
+          <h3 className={styles.cardTitle}>Goals</h3>
+          <p className={styles.help}>
+            Enter one goal per line. (Only these are saved.)
+          </p>
+          <textarea
+            className={styles.textarea}
+            rows={5}
+            value={goalsText}
             onChange={(e) =>
-              setProfile((p) => ({ ...p, age_range: e.target.value }))
-            }
-            style={{
-              width: "100%",
-              padding: 8,
-              borderRadius: 8,
-              border: "1px solid #d7dbe0",
-            }}
-          />
-        </label>
-
-        <label>
-          <div style={{ marginBottom: 4 }}>Country</div>
-          <input
-            type="text"
-            value={profile.country ?? ""} // controlled fallback
-            onChange={(e) =>
-              setProfile((p) => ({ ...p, country: e.target.value }))
-            }
-            style={{
-              width: "100%",
-              padding: 8,
-              borderRadius: 8,
-              border: "1px solid #d7dbe0",
-            }}
-          />
-        </label>
-
-        <label>
-          <div style={{ marginBottom: 4 }}>Denomination preference</div>
-          <input
-            type="text"
-            value={profile.denom_pref ?? ""} // controlled fallback
-            onChange={(e) =>
-              setProfile((p) => ({ ...p, denom_pref: e.target.value }))
-            }
-            style={{
-              width: "100%",
-              padding: 8,
-              borderRadius: 8,
-              border: "1px solid #d7dbe0",
-            }}
-          />
-        </label>
-
-        <label>
-          <div style={{ marginBottom: 4 }}>Goals (comma-separated)</div>
-          <input
-            type="text"
-            value={goalsString ?? ""} // controlled fallback
-            onChange={(e) =>
-              setProfile((p) => ({
-                ...p,
-                goals: e.target.value
-                  .split(",")
+              setField(
+                "goals",
+                (e.target.value || "")
+                  .split("\n")
                   .map((s) => s.trim())
-                  .filter(Boolean),
-              }))
+                  .filter(Boolean)
+              )
             }
-            style={{
-              width: "100%",
-              padding: 8,
-              borderRadius: 8,
-              border: "1px solid #d7dbe0",
-            }}
+            placeholder={`e.g.\nRead 1 chapter daily\nWeekly reflection on purpose\nPray morning & evening`}
           />
-        </label>
+        </section>
 
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={onSave}
-            disabled={saving}
-            style={{
-              border: "none",
-              borderRadius: 10,
-              padding: "10px 14px",
-              background: "#1663eb",
-              color: "#fff",
-              cursor: "pointer",
-            }}
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
+        <section className={styles.card}>
+          <h3 className={styles.cardTitle}>Past Activities (Review)</h3>
+          <p className={styles.help}>
+            Enter one item per line. You can paste session titles you want to
+            remember.
+          </p>
+          <textarea
+            className={styles.textarea}
+            rows={5}
+            value={activitiesText}
+            onChange={(e) =>
+              setField(
+                "pastActivities",
+                (e.target.value || "")
+                  .split("\n")
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+              )
+            }
+            placeholder={`e.g.\nMentor chat — Purpose of life\nStudy — Philippians 2:1-11 (Q&A)\nFriend chat — dealing with stress`}
+          />
+        </section>
 
-          <button
-            onClick={() => {
-              // Reset the form to last saved (or defaults during first load)
-              setProfile((prev) => ({
-                ...(prev?.id ? prev : DEFAULT_PROFILE),
-                name: prev?.name ?? DEFAULT_PROFILE.name,
-                age_range: prev?.age_range ?? DEFAULT_PROFILE.age_range,
-                country: prev?.country ?? DEFAULT_PROFILE.country,
-                denom_pref: prev?.denom_pref ?? DEFAULT_PROFILE.denom_pref,
-                goals:
-                  Array.isArray(prev?.goals) && prev.goals.length
-                    ? prev.goals
-                    : DEFAULT_PROFILE.goals,
-              }));
-            }}
-            type="button"
-            style={{
-              border: "1px solid #d7dbe0",
-              borderRadius: 10,
-              padding: "10px 14px",
-              background: "#fff",
-              color: "#111",
-              cursor: "pointer",
-            }}
-          >
-            Reset
-          </button>
+        <div className={styles.savedRow} aria-live="polite">
+          {savedTick > 0 && <span className={styles.savedPill}>Saved</span>}
         </div>
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }

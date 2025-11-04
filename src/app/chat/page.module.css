@@ -1,10 +1,12 @@
 /* src/app/chat/page.module.css */
 .wrap {
-  max-width: 720px;
+  width: 100%;
+  max-width: 880px;           /* was 720px — give the input room */
   margin: 0 auto;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  background: #fff;
 }
 
 .header {
@@ -21,11 +23,11 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-wrap: wrap;
+  flex-wrap: wrap;            /* allow wrap on small screens */
   justify-content: space-between;
 }
 
-.titleBox { display: flex; flex-direction: column; }
+.titleBox { display: flex; flex-direction: column; min-width: 240px; }
 
 .title { margin: 0; font-weight: 600; font-size: 18px; }
 
@@ -57,7 +59,14 @@
   font-size: 13px;
 }
 
-.main { flex: 1; padding: 16px; }
+.main {
+  flex: 1;
+  padding: 16px;
+  display: flex;              /* keep messages vertical and prevent input crush */
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
 
 .loading { color: #666; font-size: 13px; margin-top: 8px; }
 
@@ -78,14 +87,15 @@
   border: 1px solid #d7dbe0;
   border-radius: 10px;
   padding: 8px 10px;
-  min-width: 180px;
+  min-width: 200px;           /* a touch wider for stability */
+  flex: 1 1 auto;
 }
 
 .studyInputSmall {
   border: 1px solid #d7dbe0;
   border-radius: 10px;
   padding: 8px 10px;
-  width: 110px;
+  width: 120px;
 }
 
 .studyType {
@@ -104,3 +114,57 @@
   margin-top: 6px;
 }
 
+/* --- Profile Button --- */
+.profileBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid #d9dbe0;
+  background: linear-gradient(145deg, #ffffff, #f7f9fc);
+  color: #0b57d0;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.profileBtn:hover {
+  background: #0b57d0;
+  color: #fff;
+  border-color: #0b57d0;
+  box-shadow: 0 2px 6px rgba(11, 87, 208, 0.25);
+  transform: translateY(-1px);
+}
+
+.profileBtn:active {
+  transform: translateY(0);
+  background: #094cb4;
+  border-color: #094cb4;
+  color: #fff;
+}
+
+.profileBtn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(11, 87, 208, 0.3);
+}
+
+.profileIcon {
+  width: 16px;
+  height: 16px;
+}
+
+.profileText {
+  display: inline-block;
+}
+
+/* Make sure it wraps well on smaller screens */
+@media (max-width: 480px) {
+  .profileBtn {
+    padding: 8px 10px;
+    gap: 6px;
+    font-size: 12px;
+  }
+}

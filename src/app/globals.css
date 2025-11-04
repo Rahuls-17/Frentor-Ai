@@ -21,7 +21,7 @@ html, body {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  max-width: 720px;
+  max-width: 880px;            /* was 720px */
   margin: 0 auto;
   padding: 1rem;
   background-color: #ffffff;
@@ -66,6 +66,7 @@ html, body {
   border: 1px solid #ccc;
   border-radius: 0.75rem;
   font-size: 1rem;
+  min-width: 0;               /* prevent shrinking to one corner */
 }
 
 .chat-input button {
