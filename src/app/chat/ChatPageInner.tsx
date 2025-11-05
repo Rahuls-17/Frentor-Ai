@@ -5,7 +5,13 @@ import { useEffect, useMemo, useState } from "react";
 import styles from "./page.module.css";
 import ChatBubble from "@/components/ChatBubble";
 import ChatInput from "@/components/ChatInput";
-import { sendToBackend, getHistory, ChatTurn } from "@/lib/api";
+import {
+  sendToBackend,
+  getHistory,
+  recapSession,
+  saveLearningJournal,
+  ChatTurn,
+} from "@/lib/api";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 
@@ -44,6 +50,11 @@ export default function ChatPageInner() {
     study: false,
   });
   const [loading, setLoading] = useState(false);
+
+  // Recap + Journal state
+  const [recapping, setRecapping] = useState(false);
+  const [showJournal, setShowJournal] = useState(false);
+  const [journalText, setJournalText] = useState("");
 
   const [studyBook, setStudyBook] = useState<string>("");
   const [studyChapter, setStudyChapter] = useState<string>("");
@@ -203,15 +214,7 @@ export default function ChatPageInner() {
         } catch {}
       }
 
-      const profileData = (() => {
-        try {
-          const raw = window.localStorage.getItem(PROFILE_KEY);
-          return raw ? JSON.parse(raw) : null;
-        } catch {
-          return null;
-        }
-      })();
-
+      // profileData exists in storage but not sent anymore in this file
       const res = await sendToBackend({
         sessionId: sid,
         text,
@@ -219,7 +222,6 @@ export default function ChatPageInner() {
         mode: currentMode,
         answerMode,
         study: currentMode === "study" ? { ref: studyRef } : undefined,
-        profile: profileData,
       } as any);
 
       const reply = res?.reply ?? "(no reply)";
@@ -240,6 +242,86 @@ export default function ChatPageInner() {
       }));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onRecap = async () => {
+    const sid = sessionIdByMode[currentMode];
+    if (!sid || recapping) return;
+    setRecapping(true);
+    try {
+      const res = await recapSession(sid);
+      const recap = res?.recap || "No recap available.";
+      // Show recap to the user as the final assistant message
+      setMessagesByMode((m) => ({
+        ...m,
+        [currentMode]: [{ role: "assistant", content: recap }],
+      }));
+      // Rotate to a new session id for this mode
+      const newId = `${currentMode}-${Math.random().toString(36).slice(2, 8)}`;
+      const next = { ...sessionIdByMode, [currentMode]: newId };
+      setSessionIdByMode(next);
+      try {
+        window.localStorage.setItem(SID_KEY, JSON.stringify(next));
+      } catch {}
+
+      // After a recap, show the journal card
+      setShowJournal(true);
+      setJournalText("");
+    } catch (e: any) {
+      setMessagesByMode((m) => ({
+        ...m,
+        [currentMode]: [
+          ...m[currentMode],
+          {
+            role: "assistant",
+            content: `Recap failed: ${e?.message ?? "error"}`,
+          },
+        ],
+      }));
+    } finally {
+      setRecapping(false);
+    }
+  };
+
+  const onSaveJournal = async () => {
+    const sid = sessionIdByMode[currentMode]; // new session id (after recap)
+    if (!sid || !journalText.trim()) {
+      setShowJournal(false);
+      return;
+    }
+    try {
+      const studyRef =
+        currentMode === "study"
+          ? `${studyBook || ""} ${studyChapter || ""}:${studyVerses || ""}`
+          : undefined;
+      await saveLearningJournal({
+        sessionId: sid,
+        text: journalText.trim(),
+        mode: currentMode,
+        studyRef,
+      });
+      setShowJournal(false);
+      // Optionally show a quick confirmation message
+      setMessagesByMode((m) => ({
+        ...m,
+        [currentMode]: [
+          ...m[currentMode],
+          { role: "assistant", content: "Saved your learning & feelings. 🙏" },
+        ],
+      }));
+    } catch (e: any) {
+      setShowJournal(false);
+      setMessagesByMode((m) => ({
+        ...m,
+        [currentMode]: [
+          ...m[currentMode],
+          {
+            role: "assistant",
+            content: `Couldn't save journal: ${e?.message ?? "error"}`,
+          },
+        ],
+      }));
     }
   };
 
@@ -319,6 +401,26 @@ export default function ChatPageInner() {
               </label>
             </div>
 
+            {/* Recap button (no CSS dependency to keep scope to 4 files) */}
+            <button
+              onClick={onRecap}
+              disabled={!sidReady || recapping || loading}
+              title="Summarize and close this session"
+              style={{
+                padding: "8px 14px",
+                borderRadius: 999,
+                border: "1px solid #d9dbe0",
+                background: "#f7f9fc",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor:
+                  !sidReady || recapping || loading ? "not-allowed" : "pointer",
+                opacity: !sidReady || recapping || loading ? 0.6 : 1,
+              }}
+            >
+              {recapping ? "Summarizing…" : "Recap"}
+            </button>
+
             <Link href="/profile" className={styles.profileBtn}>
               <svg
                 className={styles.profileIcon}
@@ -373,12 +475,81 @@ export default function ChatPageInner() {
         {messages.map((m, i) => (
           <ChatBubble key={i} role={m.role} content={m.content} />
         ))}
-        {loading && <div className={styles.loading}>Thinking…</div>}
+        {(loading || recapping) && (
+          <div className={styles.loading}>
+            {loading ? "Thinking…" : "Wrapping up…"}
+          </div>
+        )}
+
+        {/* Inline journal card shown only after a recap */}
+        {showJournal && (
+          <div
+            style={{
+              border: "1px solid #e6e8eb",
+              borderRadius: 12,
+              padding: 12,
+              background: "#fafbfe",
+              marginTop: 8,
+              display: "flex",
+              gap: 8,
+              flexDirection: "column",
+            }}
+          >
+            <div style={{ fontSize: 14, fontWeight: 600 }}>
+              What did you learn today, and how did it make you feel?
+            </div>
+            <textarea
+              value={journalText}
+              onChange={(e) => setJournalText(e.target.value ?? "")}
+              placeholder="Write a short reflection…"
+              rows={4}
+              style={{
+                width: "100%",
+                border: "1px solid #d7dbe0",
+                borderRadius: 10,
+                padding: "8px 10px",
+                fontFamily: "inherit",
+                fontSize: 14,
+              }}
+            />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={onSaveJournal}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: 999,
+                  border: "1px solid #d9dbe0",
+                  background: "#0b7a44",
+                  color: "#fff",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Save
+              </button>
+              <button
+                onClick={() => setShowJournal(false)}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: 999,
+                  border: "1px solid #d9dbe0",
+                  background: "#f7f9fc",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Skip
+              </button>
+            </div>
+          </div>
+        )}
       </main>
 
       <ChatInput
         onSend={onSend}
-        disabled={!sidReady}
+        disabled={!sidReady || recapping}
         studyContext={{ mode: currentMode, ref: studyRef }}
       />
     </div>

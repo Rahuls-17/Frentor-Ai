@@ -114,6 +114,48 @@
   margin-top: 6px;
 }
 
+/* --- Recap Button --- */
+.recapBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid #d9dbe0;
+  background: linear-gradient(145deg, #ffffff, #f7f9fc);
+  color: #0b7a44;                 /* green-ish tone */
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.recapBtn:hover {
+  background: #0b7a44;
+  color: #fff;
+  border-color: #0b7a44;
+  box-shadow: 0 2px 6px rgba(11, 122, 68, 0.25);
+  transform: translateY(-1px);
+}
+
+.recapBtn:active {
+  transform: translateY(0);
+  background: #09673a;
+  border-color: #09673a;
+  color: #fff;
+}
+
+.recapBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.recapBtn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(11, 122, 68, 0.25);
+}
+
 /* --- Profile Button --- */
 .profileBtn {
   display: inline-flex;

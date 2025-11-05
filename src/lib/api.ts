@@ -1,5 +1,4 @@
 // src/lib/api.ts
-// Text-only client API helpers: no recording/STT/TTS/audio logic.
 
 export type Mode = "friend" | "mentor" | "study";
 export type AnswerMode = "human_pov" | "biblical";
@@ -52,7 +51,6 @@ export async function sendToBackend(args: SendArgs): Promise<SendResult> {
       // no autospeak, no audio
       study: args.study,
     }),
-    // Keep credentials/cookies default (adjust if your API needs them)
   });
 
   if (!res.ok) {
@@ -81,6 +79,45 @@ export async function getHistory(
     throw new Error(msg || `history failed: ${res.status}`);
   }
   const data = (await res.json()) as HistoryResult;
+  return data;
+}
+
+/** Trigger a recap: server summarizes, stores to Pinecone, clears Redis. */
+export async function recapSession(sessionId: string): Promise<{ recap: string }> {
+  const base = getBaseUrl();
+  const res = await fetch(`${base}/api/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "recap", sessionId }),
+  });
+
+  if (!res.ok) {
+    const msg = await safeText(res);
+    throw new Error(msg || `recap failed: ${res.status}`);
+  }
+  const data = (await res.json()) as { recap: string };
+  return data;
+}
+
+/** Save the user's learning/feeling reflection after a recap. */
+export async function saveLearningJournal(params: {
+  sessionId: string;
+  text: string;
+  mode: Mode;
+  studyRef?: string;
+}): Promise<{ ok: true }> {
+  const base = getBaseUrl();
+  const res = await fetch(`${base}/api/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "journal", ...params }),
+  });
+
+  if (!res.ok) {
+    const msg = await safeText(res);
+    throw new Error(msg || `journal failed: ${res.status}`);
+  }
+  const data = (await res.json()) as { ok: true };
   return data;
 }
 

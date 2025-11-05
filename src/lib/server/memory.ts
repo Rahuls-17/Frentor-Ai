@@ -35,6 +35,14 @@ export async function pushTurn(sessionId: string, turn: ChatTurn) {
   await redis.expire(key, SESSION_TTL);
 }
 
+/** Delete entire session history (used by Recap). */
+export async function deleteSessionHistory(sessionId: string) {
+  const key = `session:${sessionId}:turns`;
+  await redis.del(key);
+  const lastActiveKey = `session:${sessionId}:lastActive`;
+  await redis.del(lastActiveKey);
+}
+
 /** Pinecone upsert/query (unchanged). */
 export async function upsertSummary(userId: string, summary: string, type: string) {
   try {
@@ -51,6 +59,76 @@ export async function upsertSummary(userId: string, summary: string, type: strin
     await index.upsert([{ id: `${userId}-${Date.now()}`, values: vector, metadata: { type, text: summary, userId } }]);
   } catch (e) {
     console.error("Pinecone upsertSummary error:", e);
+  }
+}
+
+/** Store recap as a separate typed vector for LTM continuity. */
+export async function upsertRecap(sessionId: string, summary: string) {
+  try {
+    const embed = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ input: summary, model: "text-embedding-3-small" }),
+    }).then((r) => r.json());
+    const vector = embed.data?.[0]?.embedding;
+    if (!vector) return;
+    await index.upsert([
+      {
+        id: `recap:${sessionId}:${Date.now()}`,
+        values: vector,
+        metadata: {
+          type: "recap",
+          text: summary,
+          sessionId,
+          preview: summary.slice(0, 240),
+          createdAt: Date.now(),
+        },
+      },
+    ]);
+  } catch (e) {
+    console.error("Pinecone upsertRecap error:", e);
+  }
+}
+
+/** Save user’s learning reflection after recap. */
+export async function upsertLearningJournal(args: {
+  sessionId: string;
+  text: string;
+  mode?: string;
+  studyRef?: string;
+}) {
+  const { sessionId, text, mode, studyRef } = args;
+  try {
+    const embed = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ input: text, model: "text-embedding-3-small" }),
+    }).then((r) => r.json());
+    const vector = embed.data?.[0]?.embedding;
+    if (!vector) return;
+    await index.upsert([
+      {
+        id: `journal:${sessionId}:${Date.now()}`,
+        values: vector,
+        metadata: {
+          type: "learning_journal",
+          text,
+          sessionId,
+          mode,
+          studyRef,
+          preview: text.slice(0, 240),
+          createdAt: Date.now(),
+        },
+      },
+    ]);
+  } catch (e) {
+    console.error("Pinecone upsertLearningJournal error:", e);
   }
 }
 
