@@ -16,6 +16,7 @@ type SendArgs = {
   mode: Mode;                      // "friend" | "mentor" | "study"
   answerMode: AnswerMode;          // "human_pov" | "biblical"
   study?: { ref?: string; type?: StudyType }; // optional for study mode
+  profile?: any;                   // ✅ NEW: client-provided profile (from localStorage)
 };
 
 type SendResult = {
@@ -50,6 +51,7 @@ export async function sendToBackend(args: SendArgs): Promise<SendResult> {
       answerMode: args.answerMode,
       // no autospeak, no audio
       study: args.study,
+      profile: args.profile, // ✅ NEW: forward profile to backend
     }),
   });
 

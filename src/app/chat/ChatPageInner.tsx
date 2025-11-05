@@ -8,7 +8,6 @@ import ChatInput from "@/components/ChatInput";
 import {
   sendToBackend,
   getHistory,
-  recapSession,
   saveLearningJournal,
   ChatTurn,
 } from "@/lib/api";
@@ -214,7 +213,15 @@ export default function ChatPageInner() {
         } catch {}
       }
 
-      // profileData exists in storage but not sent anymore in this file
+      // ✅ NEW: Read profile from localStorage and include in payload
+      let profile: any = null;
+      try {
+        const raw = window.localStorage.getItem(PROFILE_KEY);
+        profile = raw ? JSON.parse(raw) : null;
+      } catch {
+        profile = null;
+      }
+
       const res = await sendToBackend({
         sessionId: sid,
         text,
@@ -222,6 +229,7 @@ export default function ChatPageInner() {
         mode: currentMode,
         answerMode,
         study: currentMode === "study" ? { ref: studyRef } : undefined,
+        profile, // 👈 included
       } as any);
 
       const reply = res?.reply ?? "(no reply)";
@@ -250,13 +258,26 @@ export default function ChatPageInner() {
     if (!sid || recapping) return;
     setRecapping(true);
     try {
-      const res = await recapSession(sid);
-      const recap = res?.recap || "No recap available.";
-      // Show recap to the user as the final assistant message
+      // Pass mode so server can do a mode-aware, second-person recap
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "recap",
+          sessionId: sid,
+          mode: currentMode,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const json = await res.json();
+      const recap = json?.recap || "No recap available.";
+
+      // Show recap as the final assistant message
       setMessagesByMode((m) => ({
         ...m,
         [currentMode]: [{ role: "assistant", content: recap }],
       }));
+
       // Rotate to a new session id for this mode
       const newId = `${currentMode}-${Math.random().toString(36).slice(2, 8)}`;
       const next = { ...sessionIdByMode, [currentMode]: newId };
@@ -265,7 +286,7 @@ export default function ChatPageInner() {
         window.localStorage.setItem(SID_KEY, JSON.stringify(next));
       } catch {}
 
-      // After a recap, show the journal card
+      // After recap, show the journal card
       setShowJournal(true);
       setJournalText("");
     } catch (e: any) {
@@ -302,7 +323,6 @@ export default function ChatPageInner() {
         studyRef,
       });
       setShowJournal(false);
-      // Optionally show a quick confirmation message
       setMessagesByMode((m) => ({
         ...m,
         [currentMode]: [
@@ -366,7 +386,7 @@ export default function ChatPageInner() {
           <div className={styles.titleBox}>
             <h1 className={styles.title}>Frentor Chat</h1>
             <p className={styles.sub}>
-              Persona: Saint Paul • Mode: {currentMode.toUpperCase()} • Answer:{" "}
+              Persona: Saint Paul • Mode: {currentMode.toUpperCase()} • Answer{" "}
               {answerMode === "human_pov" ? "Human POV" : "Biblical POV"}
             </p>
           </div>
@@ -401,7 +421,7 @@ export default function ChatPageInner() {
               </label>
             </div>
 
-            {/* Recap button (no CSS dependency to keep scope to 4 files) */}
+            {/* Recap button */}
             <button
               onClick={onRecap}
               disabled={!sidReady || recapping || loading}

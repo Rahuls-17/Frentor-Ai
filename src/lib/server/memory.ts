@@ -83,6 +83,7 @@ export async function upsertRecap(sessionId: string, summary: string) {
           type: "recap",
           text: summary,
           sessionId,
+          userId: sessionId, // ✅ added for filter consistency
           preview: summary.slice(0, 240),
           createdAt: Date.now(),
         },
@@ -110,27 +111,34 @@ export async function upsertLearningJournal(args: {
       },
       body: JSON.stringify({ input: text, model: "text-embedding-3-small" }),
     }).then((r) => r.json());
+
     const vector = embed.data?.[0]?.embedding;
     if (!vector) return;
+
+    // Build metadata without undefined fields
+    const metadata: Record<string, any> = {
+      type: "learning_journal",
+      text,
+      sessionId,
+      userId: sessionId, // for filter consistency
+      preview: text.slice(0, 240),
+      createdAt: Date.now(),
+    };
+    if (mode !== undefined) metadata.mode = mode;
+    if (studyRef !== undefined) metadata.studyRef = studyRef;
+
     await index.upsert([
       {
         id: `journal:${sessionId}:${Date.now()}`,
         values: vector,
-        metadata: {
-          type: "learning_journal",
-          text,
-          sessionId,
-          mode,
-          studyRef,
-          preview: text.slice(0, 240),
-          createdAt: Date.now(),
-        },
+        metadata,
       },
     ]);
   } catch (e) {
     console.error("Pinecone upsertLearningJournal error:", e);
   }
 }
+
 
 export async function fetchRelevantSummaries(userId: string, query: string, topK = 3): Promise<string[]> {
   try {
@@ -158,13 +166,4 @@ export async function getProfileMemory<T = any>(): Promise<T | null> {
 }
 export async function setProfileMemory(profile: any): Promise<void> {
   await redis.set(PROFILE_KEY, profile);
-}
-
-/** Save TTS audio to /public/audio and return a URL. */
-export async function saveTTSAudio(sessionId: string, buffer: ArrayBuffer): Promise<string> {
-  if (!fs.existsSync(AUDIO_DIR)) fs.mkdirSync(AUDIO_DIR, { recursive: true });
-  const filename = `${sessionId}-${Date.now()}.mp3`;
-  const filePath = path.join(AUDIO_DIR, filename);
-  await fs.promises.writeFile(filePath, Buffer.from(buffer));
-  return `/audio/${filename}`;
 }

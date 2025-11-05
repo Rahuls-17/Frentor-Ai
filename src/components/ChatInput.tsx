@@ -31,7 +31,7 @@ export default function ChatInput({
         const fallback =
           studyContext?.type === "sermon"
             ? `Start sermon on ${studyContext.ref}`
-            : `Q&A on ${studyContext.ref}`;
+            : `Study ${studyContext.ref}`;
         onSend(fallback);
       }
       return;

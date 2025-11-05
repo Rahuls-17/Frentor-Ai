@@ -35,7 +35,6 @@ function loadYamlFile(filename: string): any {
 
 function buildStageLine(stageYaml: any): string {
   if (!stageYaml) return "";
-  // Updated schema: { stages: [{ id, purpose, prompt }, ...] }
   const stages = (stageYaml as any)?.stages;
   if (Array.isArray(stages) && stages.length) {
     const items = stages.slice(0, 8).map((s: any, i: number) => {
@@ -52,7 +51,6 @@ ${items.join("\n")}`;
   return `Conversation stages (schema-detected): ${compact}`;
 }
 
-// Compose persona system description from new YAML fields
 function compilePersonaDescription(pYaml: any): string {
   if (!pYaml) return "warm, concise, pastoral";
   const core =
@@ -71,6 +69,36 @@ function compilePersonaDescription(pYaml: any): string {
   return parts.join("\n\n");
 }
 
+/** NEW: compact profile into a single safe line for context */
+function compactProfile(p: any): string {
+  if (!p || typeof p !== "object") return "";
+  const safe = (v: any) =>
+    typeof v === "string" ? v.trim().slice(0, 300) : "";
+  const arr = (a: any) =>
+    Array.isArray(a) ? a.map((s) => String(s ?? "").trim()).filter(Boolean) : [];
+
+  const goals = arr(p.goals).slice(0, 5).join(" • ");
+  const past = arr(p.pastActivities).slice(0, 3).join(" • ");
+
+  const parts = [
+    safe(p.name) ? `Name: ${safe(p.name)}` : "",
+    safe(p.age) ? `Age: ${safe(p.age)}` : "",
+    safe(p.country) ? `Country: ${safe(p.country)}` : "",
+    safe(p.journaling) ? `Journaling: ${safe(p.journaling)}` : "",
+    goals ? `Goals: ${goals}` : "",
+    past ? `Past activities: ${past}` : "",
+  ].filter(Boolean);
+
+  // keep overall profile line bounded
+  return parts.join(" | ").slice(0, 800);
+}
+
+/** NEW: extract a preferred name for greeting */
+function getPreferredName(profile: any): string {
+  const n = typeof profile?.name === "string" ? profile.name.trim() : "";
+  return n ? n.slice(0, 60) : "";
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -78,6 +106,9 @@ export async function POST(req: NextRequest) {
     // ---- Recap action (explicit) ----
     if (body?.action === "recap") {
       const sessionId: string = body?.sessionId;
+      const recapMode: "friend" | "mentor" | "study" =
+        body?.mode === "mentor" || body?.mode === "study" ? body.mode : "friend";
+
       if (!sessionId || typeof sessionId !== "string") {
         return new Response("Missing sessionId", { status: 400 });
       }
@@ -97,23 +128,35 @@ export async function POST(req: NextRequest) {
         })
         .join("\n");
 
-      // summarize briefly (same style as your existing summarizer)
       const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
       if (!OPENAI_API_KEY)
         return new Response("Missing OPENAI_API_KEY", { status: 500 });
       const model = process.env.OPENAI_MODEL || "gpt-5";
 
+      const modeDirectives: Record<string, string> = {
+        friend:
+          "Summarize the conversation you had with a compassionate friend: what you shared, how you felt, and any moments of relief or clarity. Avoid giving instructions.",
+        mentor:
+          "Summarize the mentorship you received: the guidance or options offered to you, the main principle emphasized, and (if present) a scripture reference in book+chapter form (e.g., Philippians 4).",
+        study:
+          "Summarize your study session: which passage(s) you focused on, 1–2 key insights you learned, and one question or curiosity you’re still holding.",
+      };
+
       const summaryMessages = [
         {
           role: "system" as const,
-          content:
-            "You are a helpful assistant that summarizes a conversation briefly for future context retrieval.",
+          content: [
+            "Write a recap in SECOND PERSON (use 'you'/'your'). Do NOT use 'User' or 'Assistant'.",
+            "Output 4–6 compact lines. No headings, no quotes, no bullet symbols, no imperative instructions.",
+            modeDirectives[recapMode],
+            "Keep the tone warm and non-judgmental. Be concise and concrete.",
+          ].join(" "),
         },
         {
           role: "user" as const,
           content:
-            `Create a short recap (4–6 compact lines) capturing the main themes, decisions, and next steps (if any). Avoid quotes and PII.\n\n` +
-            rawText,
+            `Here is the full dialog transcript:\n\n${rawText}\n\n` +
+            `Write the recap now in second person as per the instructions.`,
         },
       ];
 
@@ -141,10 +184,7 @@ export async function POST(req: NextRequest) {
       const recapText: string =
         summaryJson?.choices?.[0]?.message?.content?.trim() || "No recap available.";
 
-      // store recap in Pinecone as context history
       await upsertRecap(sessionId, recapText);
-
-      // clear session messages from Redis
       await deleteSessionHistory(sessionId);
 
       return new Response(JSON.stringify({ recap: recapText }), {
@@ -167,7 +207,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ---- Normal chat path (unchanged except: NO capping/post-processing) ----
+    // ---- Normal chat path (unchanged except: study stage loading + greet hint) ----
     const {
       sessionId,
       text,
@@ -175,7 +215,7 @@ export async function POST(req: NextRequest) {
       mode = "friend", // "friend" | "mentor" | "study"
       answerMode = "human_pov", // "human_pov" | "biblical"
       study, // optional { ref, type }
-      profile, // left as-is
+      profile, // client-provided profile (from localStorage)
     } = body || {};
 
     if (!sessionId || typeof sessionId !== "string") {
@@ -186,13 +226,13 @@ export async function POST(req: NextRequest) {
       return new Response("Missing text", { status: 400 });
     }
 
-    // YAML persona/mode/stages — LOGIC PRESERVED
-    // NOTE: stages.yaml is ONLY for friend & mentor (NOT for study)
     const personaYaml = loadYamlFile("persona.yaml");
     const modeYaml = loadYamlFile(`mode.${mode}.yaml`);
     const stageYaml =
       mode === "friend" || mode === "mentor"
         ? loadYamlFile("stages.yaml")
+        : mode === "study"
+        ? loadYamlFile("study.yaml")
         : null;
 
     const personaName =
@@ -207,11 +247,10 @@ export async function POST(req: NextRequest) {
         ? "Biblical (quote/paraphrase Scripture appropriately)"
         : "Human POV (pastoral guidance)";
 
-    // Budgets text remains as guidance only in system; we won't post-trim the model output
     const personaBudget =
-      typeof personaYaml?.style?.length_tokens === "number" &&
-      (personaYaml?.style?.length_tokens as number) > 0
-        ? (personaYaml!.style!.length_tokens as number)
+      typeof (personaYaml as any)?.style?.length_tokens === "number" &&
+      ((personaYaml as any)?.style?.length_tokens as number) > 0
+        ? ((personaYaml as any)!.style!.length_tokens as number)
         : 160;
 
     const lengthBudget =
@@ -239,11 +278,8 @@ export async function POST(req: NextRequest) {
 
     const stageLine = buildStageLine(stageYaml);
 
-    // Context: Redis recent turns + Pinecone LTM
     const fullHistory = await getSessionHistory(sessionId);
-    const recent = Array.isArray(fullHistory)
-      ? fullHistory.slice(-MAX_TURNS)
-      : [];
+    const recent = Array.isArray(fullHistory) ? fullHistory.slice(-MAX_TURNS) : [];
 
     const historyMsgs: Array<{
       role: "system" | "user" | "assistant";
@@ -264,45 +300,67 @@ export async function POST(req: NextRequest) {
       })
       .filter((m) => m.content && m.content.trim().length > 0);
 
-    // Mode-specific hints (kept as guidance to the model only)
+    const hasAssistantBefore = recent.some((t: any) => t?.role === "assistant");
+    const greetPolicy = hasAssistantBefore
+      ? "Do NOT repeat any greeting like 'Grace and peace to you.' since this is not the first assistant reply in this session."
+      : "This is the first assistant reply in the session; you may greet briefly once.";
+
     const modeToneHint =
       mode === "friend"
         ? "Voice/Tone: modern American conversational English; very short, human sentences; empathy first; no directives."
         : mode === "mentor"
         ? "Voice/Tone: warm mentor; gentle teacher; weave scripture conversationally (reference letters rather than quoting at length); keep it succinct."
+        : mode === "study"
+        ? "Voice/Tone: calm, text-centered, concise; clarify intent, provide compact context, invite one observation; avoid long quotations."
         : "";
 
     const phaseHint =
       mode === "friend"
-        ? "FRIEND PHASE: If unclear, you may ask ONE short question; otherwise reflect briefly."
+        ? "FRIEND PHASE: If unclear, you may ask ONE short question; otherwise reflect briefly. Share lived experience ONLY after clarity."
         : mode === "mentor"
-        ? "MENTOR PHASE: Offer one brief, path-oriented suggestion when clear; if unclear, you may ask ONE clarifying question."
+        ? "MENTOR PHASE: Offer one brief, invitational suggestion when clear; if unclear, ask ONE clarifying question. Share lived experience ONLY after clarity."
+        : mode === "study"
+        ? "STUDY PHASE: Clarify study intent (passage/theme); provide 1–2 short context lines; invite ONE observation; application only if asked."
         : "";
 
-    // Final message array
+    // NEW: Build a compact profile line and a friendly greeting directive using the name
+    const profileLine = compactProfile(profile);
+    const preferredName = getPreferredName(profile);
+    const userIntroLine = preferredName
+      ? `You are conversing with ${preferredName}. When you greet them, you may say, “Grace and peace to you, ${preferredName}.” Address them by name warmly when appropriate.`
+      : "You are conversing with the user. You may greet them warmly (e.g., “Grace and peace to you”).";
+
     const messages: Array<{
       role: "system" | "user" | "assistant";
       content: string;
     }> = [
       ...(modeToneHint ? [{ role: "system" as const, content: modeToneHint }] : []),
       ...(phaseHint ? [{ role: "system" as const, content: phaseHint }] : []),
+      { role: "system" as const, content: greetPolicy },
       { role: "system" as const, content: personaSystem },
+      { role: "system" as const, content: userIntroLine },
+      ...(profileLine
+        ? [
+            {
+              role: "system" as const,
+              content:
+                `User details for context: ${profileLine}. Use this to make responses personal and connected.`,
+            },
+          ]
+        : []),
       { role: "system" as const, content: brevityPolicy },
       { role: "system" as const, content: selfCheck },
       ...(stageLine ? [{ role: "system" as const, content: stageLine }] : []),
-      // LTM
       ...((await fetchRelevantSummaries(sessionId, userText, MAX_LTM)) || []).map(
         (s: string, i: number) => ({
           role: "system" as const,
           content: `Long-term memory ${i + 1}: ${s}`,
         })
       ),
-      // Recent turns
       ...historyMsgs,
       { role: "user" as const, content: userText },
     ];
 
-    // Call OpenAI
     const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
     if (!OPENAI_API_KEY)
       return new Response("Missing OPENAI_API_KEY", { status: 500 });
@@ -329,20 +387,16 @@ export async function POST(req: NextRequest) {
     }
 
     const oaiJson: any = await oaiRes.json().catch(() => ({}));
-    // IMPORTANT: no trimming/capping or forced questioning — return as-is
     const reply: string =
       oaiJson?.choices?.[0]?.message?.content?.trim() || "(no reply)";
 
-    // Persist turns to Redis (unchanged)
     await pushTurn(sessionId, { role: "user", content: userText });
     await pushTurn(sessionId, { role: "assistant", content: reply });
 
-    // Touch lastActive
     const lastActiveKey = `session:${sessionId}:lastActive`;
     await redis.set(lastActiveKey, Date.now().toString());
     await redis.expire(lastActiveKey, 60 * 60 * 24 * 7);
 
-    // Rolling summary every N messages (unchanged)
     const turns = await getSessionHistory(sessionId);
     if (Array.isArray(turns) && turns.length % SUMMARY_MESSAGE_COUNT === 0) {
       const rawText = turns
