@@ -12,12 +12,17 @@ import {
   deleteSessionHistory,
   upsertRecap,
   upsertLearningJournal,
+  fetchPastRecapsFromPinecone, // ✅ import kept
 } from "@/lib/server/memory";
 
 // Limits for contextualization
 const MAX_TURNS = 12; // last N turns from Redis
-const MAX_LTM = 3; // top-K Pinecone summaries
+const MAX_LTM = 10; // top-K Pinecone summaries
 const SUMMARY_MESSAGE_COUNT = 10; // unchanged cadence
+
+// how many past recaps to include in prompt (from Redis/Pinecone)
+const MAX_PAST_RECAPS = 10;
+const RECAPS_KEY = (sessionId: string) => `recaps:${sessionId}`;
 
 // Persona assets location (adjust if your repo differs)
 const PERSONAS_DIR = path.resolve(process.cwd(), "src/personas/paul");
@@ -69,7 +74,7 @@ function compilePersonaDescription(pYaml: any): string {
   return parts.join("\n\n");
 }
 
-/** NEW: compact profile into a single safe line for context */
+/** compact profile into a single safe line for context */
 function compactProfile(p: any): string {
   if (!p || typeof p !== "object") return "";
   const safe = (v: any) =>
@@ -93,7 +98,7 @@ function compactProfile(p: any): string {
   return parts.join(" | ").slice(0, 800);
 }
 
-/** NEW: extract a preferred name for greeting */
+/** extract a preferred name for greeting */
 function getPreferredName(profile: any): string {
   const n = typeof profile?.name === "string" ? profile.name.trim() : "";
   return n ? n.slice(0, 60) : "";
@@ -184,7 +189,18 @@ export async function POST(req: NextRequest) {
       const recapText: string =
         summaryJson?.choices?.[0]?.message?.content?.trim() || "No recap available.";
 
+      // Save recap to long-term store
       await upsertRecap(sessionId, recapText);
+
+      // Also push recap to Redis list for easy retrieval in future prompts (by sessionId)
+      try {
+        await redis.lpush(RECAPS_KEY(sessionId), recapText);
+        await redis.ltrim(RECAPS_KEY(sessionId), 0, MAX_PAST_RECAPS - 1);
+      } catch {
+        // best-effort only
+      }
+
+      // Clear the short-term history
       await deleteSessionHistory(sessionId);
 
       return new Response(JSON.stringify({ recap: recapText }), {
@@ -207,7 +223,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ---- Normal chat path (unchanged except: study stage loading + greet hint) ----
+    // ---- Normal chat path ----
     const {
       sessionId,
       text,
@@ -311,7 +327,7 @@ export async function POST(req: NextRequest) {
         : mode === "mentor"
         ? "Voice/Tone: warm mentor; gentle teacher; weave scripture conversationally (reference letters rather than quoting at length); keep it succinct."
         : mode === "study"
-        ? "Voice/Tone: calm, text-centered, concise; clarify intent, provide compact context, invite one observation; avoid long quotations."
+        ? "Voice/Tone: calm, text-centered, concise; clarify intent, provide compact context, invite ONE observation; avoid long quotations."
         : "";
 
     const phaseHint =
@@ -323,12 +339,55 @@ export async function POST(req: NextRequest) {
         ? "STUDY PHASE: Clarify study intent (passage/theme); provide 1–2 short context lines; invite ONE observation; application only if asked."
         : "";
 
-    // NEW: Build a compact profile line and a friendly greeting directive using the name
+    // Build a compact profile line and a friendly greeting directive using the name
     const profileLine = compactProfile(profile);
     const preferredName = getPreferredName(profile);
     const userIntroLine = preferredName
       ? `You are conversing with ${preferredName}. When you greet them, you may say, “Grace and peace to you, ${preferredName}.” Address them by name warmly when appropriate.`
       : "You are conversing with the user. You may greet them warmly (e.g., “Grace and peace to you”).";
+
+    // fetch last few past recaps (Redis first; Pinecone fallback)
+    let pastRecapMsgs: Array<{ role: "system"; content: string }> = [];
+    try {
+      let recaps = await redis.lrange(RECAPS_KEY(sessionId), 0, MAX_PAST_RECAPS - 1);
+
+      if (!recaps || recaps.length === 0) {
+        // Pinecone fallback by userId/sessionId
+        const pineRecaps = await fetchPastRecapsFromPinecone(sessionId, MAX_PAST_RECAPS);
+        recaps = pineRecaps;
+
+        // Optionally repopulate Redis cache for speed next time (best-effort)
+        if (recaps && recaps.length > 0) {
+          await redis.del(RECAPS_KEY(sessionId));
+          for (const r of recaps) {
+            await redis.rpush(RECAPS_KEY(sessionId), r);
+          }
+          await redis.ltrim(RECAPS_KEY(sessionId), -MAX_PAST_RECAPS, -1);
+        }
+      }
+
+      if (Array.isArray(recaps) && recaps.length > 0) {
+        pastRecapMsgs = recaps.map((r, i) => ({
+          role: "system" as const,
+          content: `Past session recap ${i + 1}: ${String(r).trim().slice(0, 1200)}`,
+        }));
+      }
+    } catch {
+      // best effort; if Redis/Pinecone has an issue, simply omit pastRecapMsgs
+    }
+
+    // ✅ NEW meta-instructions to clearly label memory vs recent context
+    const memoryContextIntro = {
+      role: "system" as const,
+      content:
+        "BACKGROUND CONTEXT: The next lines include the user's past session recaps and long-term summaries from previous conversations. Use them only for continuity and understanding. Do NOT repeat or restate them unless the user brings them up.",
+    };
+
+    const recentContextIntro = {
+      role: "system" as const,
+      content:
+        "RECENT CONTEXT (Redis): The next messages are the latest turns from this session. Treat them as the active conversation. Do not repeat greetings. Do not re-ask a question you've already asked unless the user did not answer it. Prefer progressing the discussion based on the most recent user message.",
+    };
 
     const messages: Array<{
       role: "system" | "user" | "assistant";
@@ -348,16 +407,29 @@ export async function POST(req: NextRequest) {
             },
           ]
         : []),
+
+      // 🔹 Clearly announce that recaps + LTM follow and are background
+      memoryContextIntro,
+      // include clearly labeled past recaps (most recent first)
+      ...pastRecapMsgs,
+
       { role: "system" as const, content: brevityPolicy },
       { role: "system" as const, content: selfCheck },
       ...(stageLine ? [{ role: "system" as const, content: stageLine }] : []),
+
+      // 🔹 LTM summaries (semantic matches) — also part of BACKGROUND
       ...((await fetchRelevantSummaries(sessionId, userText, MAX_LTM)) || []).map(
         (s: string, i: number) => ({
           role: "system" as const,
-          content: `Long-term memory ${i + 1}: ${s}`,
+          content: `Long-term summary ${i + 1}: ${s}`,
         })
       ),
+
+      // 🔹 Clearly announce that the next lines are the last few messages with the user
+      recentContextIntro,
       ...historyMsgs,
+
+      // Current message to answer
       { role: "user" as const, content: userText },
     ];
 

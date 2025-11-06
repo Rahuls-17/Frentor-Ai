@@ -139,7 +139,6 @@ export async function upsertLearningJournal(args: {
   }
 }
 
-
 export async function fetchRelevantSummaries(userId: string, query: string, topK = 3): Promise<string[]> {
   try {
     const embed = await fetch("https://api.openai.com/v1/embeddings", {
@@ -156,6 +155,50 @@ export async function fetchRelevantSummaries(userId: string, query: string, topK
     return res.matches?.map((m) => m.metadata?.text as string) || [];
   } catch (e) {
     console.error("Pinecone query error:", e);
+    return [];
+  }
+}
+
+/**
+ * 🔄 Fallback: fetch the latest few recap texts from Pinecone when Redis has none.
+ * Filters by { userId, type: "recap" }, returns the most recent 'limit' by createdAt (desc).
+ * Note: Pinecone doesn't sort server-side; we request a modest topK and sort locally.
+ */
+export async function fetchPastRecapsFromPinecone(userId: string, limit = 3): Promise<string[]> {
+  try {
+    // Use a neutral query: embed a short generic token to satisfy query API.
+    const embed = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ input: "recap", model: "text-embedding-3-small" }),
+    }).then((r) => r.json());
+
+    const vector = embed.data?.[0]?.embedding;
+    if (!vector) return [];
+
+    // Ask for a small pool, then sort by createdAt desc
+    const res = await index.query({
+      vector,
+      topK: Math.max(limit, 10), // fetch a bit more, then trim after sorting
+      includeMetadata: true,
+      includeValues: false,
+      filter: { userId, type: "recap" },
+    });
+
+    const matches = res?.matches || [];
+    const sorted = matches.sort(
+      (a: any, b: any) => (b?.metadata?.createdAt || 0) - (a?.metadata?.createdAt || 0)
+    );
+
+    return sorted
+      .slice(0, limit)
+      .map((m: any) => (m?.metadata?.text as string) || "")
+      .filter((t: string) => typeof t === "string" && t.trim().length > 0);
+  } catch (e) {
+    console.error("Pinecone fetchPastRecapsFromPinecone error:", e);
     return [];
   }
 }
