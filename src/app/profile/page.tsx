@@ -1,3 +1,4 @@
+//src/app/profile/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -39,13 +40,21 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [savedTick, setSavedTick] = useState(0);
 
+  // NEW: raw textarea states so we don't trim on every keystroke
+  const [goalsRaw, setGoalsRaw] = useState<string>(
+    (DEFAULT_PROFILE.goals || []).join("\n")
+  );
+  const [activitiesRaw, setActivitiesRaw] = useState<string>(
+    (DEFAULT_PROFILE.pastActivities || []).join("\n")
+  );
+
   // Load from localStorage on mount
   useEffect(() => {
     try {
       const raw = localStorage.getItem(LS_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        setData({
+        const next: ProfileData = {
           name: parsed?.name ?? DEFAULT_PROFILE.name,
           age: parsed?.age ?? DEFAULT_PROFILE.age,
           country: parsed?.country ?? DEFAULT_PROFILE.country,
@@ -56,20 +65,52 @@ export default function ProfilePage() {
           pastActivities: Array.isArray(parsed?.pastActivities)
             ? parsed.pastActivities
             : DEFAULT_PROFILE.pastActivities,
-        });
+        };
+        setData(next);
+        // sync raw textareas with loaded arrays
+        setGoalsRaw((next.goals || []).join("\n"));
+        setActivitiesRaw((next.pastActivities || []).join("\n"));
+      } else {
+        // sync raw with defaults on first load
+        setGoalsRaw((DEFAULT_PROFILE.goals || []).join("\n"));
+        setActivitiesRaw((DEFAULT_PROFILE.pastActivities || []).join("\n"));
       }
     } catch {
       // ignore, stick to defaults
+      setGoalsRaw((DEFAULT_PROFILE.goals || []).join("\n"));
+      setActivitiesRaw((DEFAULT_PROFILE.pastActivities || []).join("\n"));
     } finally {
       setLoaded(true);
     }
   }, []);
 
+  // If data.goals or data.pastActivities change elsewhere, keep raw in sync
+  useEffect(() => {
+    setGoalsRaw((data.goals || []).join("\n"));
+  }, [data.goals]);
+
+  useEffect(() => {
+    setActivitiesRaw((data.pastActivities || []).join("\n"));
+  }, [data.pastActivities]);
+
   function save() {
     setSaving(true);
     try {
-      localStorage.setItem(LS_KEY, JSON.stringify(data));
-      // nice little saved tick
+      // sanitize ONLY at save time
+      const sanitized: ProfileData = {
+        ...data,
+        goals: (goalsRaw || "")
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        pastActivities: (activitiesRaw || "")
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      };
+
+      localStorage.setItem(LS_KEY, JSON.stringify(sanitized));
+      setData(sanitized); // reflect sanitized data after save
       setSavedTick((x) => x + 1);
     } finally {
       setSaving(false);
@@ -83,10 +124,6 @@ export default function ProfilePage() {
   ) => {
     setData((d) => ({ ...d, [key]: value }));
   };
-
-  // textarea <-> array helpers
-  const goalsText = (data.goals || []).join("\n");
-  const activitiesText = (data.pastActivities || []).join("\n");
 
   return (
     <div className={styles.wrap}>
@@ -184,16 +221,8 @@ export default function ProfilePage() {
           <textarea
             className={styles.textarea}
             rows={5}
-            value={goalsText}
-            onChange={(e) =>
-              setField(
-                "goals",
-                (e.target.value || "")
-                  .split("\n")
-                  .map((s) => s.trim())
-                  .filter(Boolean)
-              )
-            }
+            value={goalsRaw}
+            onChange={(e) => setGoalsRaw(e.target.value)}
             placeholder={`e.g.\nRead 1 chapter daily\nWeekly reflection on purpose\nPray morning & evening`}
           />
         </section>
@@ -207,16 +236,8 @@ export default function ProfilePage() {
           <textarea
             className={styles.textarea}
             rows={5}
-            value={activitiesText}
-            onChange={(e) =>
-              setField(
-                "pastActivities",
-                (e.target.value || "")
-                  .split("\n")
-                  .map((s) => s.trim())
-                  .filter(Boolean)
-              )
-            }
+            value={activitiesRaw}
+            onChange={(e) => setActivitiesRaw(e.target.value)}
             placeholder={`e.g.\nMentor chat — Purpose of life\nStudy — Philippians 2:1-11 (Q&A)\nFriend chat — dealing with stress`}
           />
         </section>
