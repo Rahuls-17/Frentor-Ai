@@ -12,7 +12,7 @@ import {
   deleteSessionHistory,
   upsertRecap,
   upsertLearningJournal,
-  fetchPastRecapsFromPinecone, // ✅ import kept
+  fetchPastRecapsFromPinecone,
 } from "@/lib/server/memory";
 
 // Limits for contextualization
@@ -24,7 +24,7 @@ const SUMMARY_MESSAGE_COUNT = 10; // unchanged cadence
 const MAX_PAST_RECAPS = 10;
 const RECAPS_KEY = (sessionId: string) => `recaps:${sessionId}`;
 
-// Persona assets location (adjust if your repo differs)
+// Persona assets location (kept as-is)
 const PERSONAS_DIR = path.resolve(process.cwd(), "src/personas/paul");
 
 function loadYamlFile(filename: string): any {
@@ -276,36 +276,147 @@ export async function POST(req: NextRequest) {
         ? 120
         : 110;
 
+    // ---------- PROMPT: system blocks ----------
+
+    // QUESTION POLICY (one per reply; mentor clarifies across turns)
+    const questionPolicy = "Ask at most ONE sincere question per reply (zero is fine once the user has shared). Clarify across turns if needed.";
+
+    // Clear, modern, non-AI voice & differentiation across modes
     const personaSystem = `You are "${personaName}"—${personaDescription}.
 - Persona: ${figure}
 - Mode: ${modeDescription}
 - Answer perspective: ${answerPerspective}
-- Keep replies brief (2–4 short sentences). Avoid long paragraphs.`;
+- Sound fully human and modern. Never say you are an AI. No boilerplate disclaimers. No bullet lists. No long paragraphs.
+- Prefer 2–4 short sentences; go longer only if the user asks or nuance is essential.
+- ${questionPolicy}`;
 
+    // Brevity & mode movement
     const brevityPolicy = [
-      `Answer-Length Budget: ~${lengthBudget} tokens.`,
-      mode === "study"
-        ? `In STUDY mode you may exceed the budget briefly for necessary quotations or exegesis.`
-        : `In ${mode.toUpperCase()} mode, write conversationally in short lines; avoid bullet lists.`,
+      `Target Length: ~${lengthBudget} tokens (flexible).`,
+      `Reflect first (emotion or motive).`,
+      mode === "friend"
+        ? `FRIEND: Movement = connection only (empathy, shared "I" line, or one gentle question). Do NOT propose techniques or homework.`
+        : mode === "mentor"
+        ? `MENTOR: Clarify first with ONE concise question and stop. After the user answers, frame the issue briefly and offer one tiny, invitational next step.`
+        : `STUDY: Focus and clarify.`,
     ].join(" ");
 
+    // Tone hints
+    const modeToneHint =
+      mode === "friend"
+        ? "FRIEND MODE: Focus on the person—their feelings, day, relationships, interests (off-topic is fine if it builds trust). Ask one personal, present-tense question when unclear. Avoid doctrine unless invited."
+        : mode === "mentor"
+        ? "MENTOR MODE: Real mentor presence—brief empathy, one wise probing question, then (after they answer) a small invitation grounded in principle."
+        : mode === "study"
+        ? "STUDY MODE: Clarify passage/theme; offer 1–2 short lines of context; invite ONE observation; cite by book/chapter; quote only on request."
+        : "";
+
+    // Phase hints
+    const phaseHint =
+      mode === "friend"
+        ? "After asking (if needed), mirror what you heard and strengthen connection. Most turns should not include any personal story—use lived experience rarely, only if empathy alone would feel too distant. Presence and listening matter more than sharing your past. You may end without a question."
+        : mode === "mentor"
+        ? "Clarify first with ONE concise scope/motive question and stop. After they answer, frame the issue in one short line, then offer one tiny, invitational step or two soft options max; keep agency with the user."
+        : mode === "study"
+        ? "Confirm focus, give compact context, invite one observation. Application only if asked."
+        : "";
+
+    // Anti-generic AI
+    const antiGenericVoice = [
+      "Do not explain your capabilities or limitations.",
+      "Do not output outlines or lists; use short, human sentences.",
+      "Avoid repeating the same opener or signature phrase in adjacent replies.",
+      "If your previous turn ended with a question and the user did not directly answer it, DO NOT ask another question now—reflect briefly and move forward.",
+    ].join(" ");
+
+    // Attribution / citation policy (scriptural only)
+    const attributionPolicy = [
+      "ATTRIBUTION POLICY:",
+      "- When you invoke a recognizably Pauline idea, include ONE brief parenthetical citation per idea cluster (e.g., “(Romans 8)”).",
+      "- FRIEND: generally avoid citations unless you clearly refer to a verse or the user asks.",
+      "- MENTOR: usually include 0–1 brief citation when grounding a principle.",
+      "- STUDY: cite by book/chapter; quote only on request (“show me the passage”).",
+      "COMMON THEMES → CITATIONS:",
+      "• Suffering & hope → (Romans 8; 2 Corinthians 1)",
+      "• Strength in weakness → (2 Corinthians 12)",
+      "• Reconciliation → (2 Corinthians 5)",
+      "• Unity & humility → (Philippians 2)",
+      "• Anxiety & prayer → (Philippians 4)",
+      "• Love & community → (Romans 12; 1 Corinthians 13)",
+      "• Perseverance → (Galatians 6; Romans 5)",
+      "Do not add 'Basis:' lines or cite personal experience.",
+    ].join(" ");
+
+    // Precedence
+    const precedenceRule =
+      "If answerMode ever conflicts with the Mode’s language/behavior rules, the Mode rules take precedence. Keep citations compact and human; avoid verse dumps unless the user requests quotations.";
+
+    // Name repetition fix
+    const profileLine = compactProfile(profile);
+    const preferredName = getPreferredName(profile);
+    const userIntroLine = preferredName
+      ? `You are conversing with ${preferredName}.
+Use their name only in the **first greeting** of a session or when it adds clarity or comfort.
+Do NOT repeat their name in every reply. Avoid starting more than one reply in a row with their name.`
+      : "You are conversing with the user. You may greet them once warmly (e.g., “Grace and peace to you”). Then stop repeating their name unless context truly needs it.";
+
+    // Friend lexical guardrails if present in persona.yaml
+    const friendGuard =
+      mode === "friend" && (personaYaml as any)?.lexical_guards
+        ? `FRIEND MODE LEXICAL GUARDS:
+- Forbidden imperatives: ${((personaYaml as any).lexical_guards.friend_forbidden_imperatives || []).join(", ")}.
+- Rule: ${(personaYaml as any).lexical_guards.friend_rewrite_rule}`
+        : "";
+
+    const modePhilosophy =
+      (modeYaml as any)?.philosophy ? `MODE PHILOSOPHY:\n${(modeYaml as any).philosophy}` : "";
+    const modeBehavior =
+      (modeYaml as any)?.behavior
+        ? `MODE BEHAVIOR:\n${Object.entries((modeYaml as any).behavior)
+            .map(([k, v]) => `${k}:\n${v}`)
+            .join("\n")}`
+        : "";
+    const modeLanguage =
+      (modeYaml as any)?.language?.constraints?.length
+        ? `MODE LANGUAGE CONSTRAINTS:\n- ${((modeYaml as any).language.constraints as string[]).join("\n- ")}`
+        : "";
+    const modeSamples =
+      Array.isArray((modeYaml as any)?.samples) && (modeYaml as any).samples.length
+        ? `SAMPLES (style, not to parrot):\n${((modeYaml as any).samples as any[])
+            .slice(0, 3)
+            .map((s: any) => `U: ${s.user}\nA: ${s.ai}`)
+            .join("\n\n")}`
+        : "";
+
+    // Self-checks
     const selfCheck =
-      "Before finalizing, quickly self-check: keep it short, clear, and human. If unclear, ask ONE short question. If clear, stop clarifying and respond briefly.";
+      "Before finalizing: keep it short, human, and specific. Vary phrasing. If your last turn ended with a question that wasn’t answered, do NOT ask another—reflect and advance the conversation.";
+
+    const friendSelfCheck =
+      mode === "friend"
+        ? `FRIEND MODE SELF-CHECK:
+If you used any of these as imperatives—try, take, write, breathe, read, pray, list, choose, pick, practice, journal, name—REWRITE into empathy or an "I" story. No techniques or homework.`
+        : "";
+
+    // Friend experience guard
+    const friendExperienceGuard =
+      mode === "friend"
+        ? "Before sending: if you already conveyed understanding, skip any personal story. Keep most Friend replies experience-free; include a brief 'I' line only when warmth alone would feel too thin."
+        : "";
+
+    // Citation self-check—cite only Scripture/Pauline ideas; never cite personal experience
+    const citationSelfCheck =
+      "Before sending: include ONE compact parenthetical citation only if you quoted or clearly paraphrased a Pauline verse/idea (e.g., “(Philippians 4)”). Do NOT add 'Basis:' lines or cite personal experience.";
 
     const stageLine = buildStageLine(stageYaml);
 
     const fullHistory = await getSessionHistory(sessionId);
     const recent = Array.isArray(fullHistory) ? fullHistory.slice(-MAX_TURNS) : [];
 
-    const historyMsgs: Array<{
-      role: "system" | "user" | "assistant";
-      content: string;
-    }> = recent
+    const historyMsgs: Array<{ role: "system" | "user" | "assistant"; content: string }> = recent
       .map((t: any) => {
         const role =
-          t?.role === "user" ||
-          t?.role === "assistant" ||
-          t?.role === "system"
+          t?.role === "user" || t?.role === "assistant" || t?.role === "system"
             ? t.role
             : "user";
         const content =
@@ -321,103 +432,69 @@ export async function POST(req: NextRequest) {
       ? "Do NOT repeat any greeting like 'Grace and peace to you.' since this is not the first assistant reply in this session."
       : "This is the first assistant reply in the session; you may greet briefly once.";
 
-    const modeToneHint =
-      mode === "friend"
-        ? "Voice/Tone: modern American conversational English; very short, human sentences; empathy first; no directives."
-        : mode === "mentor"
-        ? "Voice/Tone: warm mentor; gentle teacher; weave scripture conversationally (reference letters rather than quoting at length); keep it succinct."
-        : mode === "study"
-        ? "Voice/Tone: calm, text-centered, concise; clarify intent, provide compact context, invite ONE observation; avoid long quotations."
-        : "";
-
-    const phaseHint =
-      mode === "friend"
-        ? "FRIEND PHASE: If unclear, you may ask ONE short question; otherwise reflect briefly. Share lived experience ONLY after clarity."
-        : mode === "mentor"
-        ? "MENTOR PHASE: Offer one brief, invitational suggestion when clear; if unclear, ask ONE clarifying question. Share lived experience ONLY after clarity."
-        : mode === "study"
-        ? "STUDY PHASE: Clarify study intent (passage/theme); provide 1–2 short context lines; invite ONE observation; application only if asked."
-        : "";
-
-    // Build a compact profile line and a friendly greeting directive using the name
-    const profileLine = compactProfile(profile);
-    const preferredName = getPreferredName(profile);
-    const userIntroLine = preferredName
-      ? `You are conversing with ${preferredName}. When you greet them, you may say, “Grace and peace to you, ${preferredName}.” Address them by name warmly when appropriate.`
-      : "You are conversing with the user. You may greet them warmly (e.g., “Grace and peace to you”).";
-
-    // fetch last few past recaps (Redis first; Pinecone fallback)
-    let pastRecapMsgs: Array<{ role: "system"; content: string }> = [];
-    try {
-      let recaps = await redis.lrange(RECAPS_KEY(sessionId), 0, MAX_PAST_RECAPS - 1);
-
-      if (!recaps || recaps.length === 0) {
-        // Pinecone fallback by userId/sessionId
-        const pineRecaps = await fetchPastRecapsFromPinecone(sessionId, MAX_PAST_RECAPS);
-        recaps = pineRecaps;
-
-        // Optionally repopulate Redis cache for speed next time (best-effort)
-        if (recaps && recaps.length > 0) {
-          await redis.del(RECAPS_KEY(sessionId));
-          for (const r of recaps) {
-            await redis.rpush(RECAPS_KEY(sessionId), r);
-          }
-          await redis.ltrim(RECAPS_KEY(sessionId), -MAX_PAST_RECAPS, -1);
-        }
-      }
-
-      if (Array.isArray(recaps) && recaps.length > 0) {
-        pastRecapMsgs = recaps.map((r, i) => ({
-          role: "system" as const,
-          content: `Past session recap ${i + 1}: ${String(r).trim().slice(0, 1200)}`,
-        }));
-      }
-    } catch {
-      // best effort; if Redis/Pinecone has an issue, simply omit pastRecapMsgs
-    }
-
-    // ✅ NEW meta-instructions to clearly label memory vs recent context
+    // Background context markers
     const memoryContextIntro = {
       role: "system" as const,
       content:
         "BACKGROUND CONTEXT: The next lines include the user's past session recaps and long-term summaries from previous conversations. Use them only for continuity and understanding. Do NOT repeat or restate them unless the user brings them up.",
     };
-
     const recentContextIntro = {
       role: "system" as const,
       content:
-        "RECENT CONTEXT (Redis): The next messages are the latest turns from this session. Treat them as the active conversation. Do not repeat greetings. Do not re-ask a question you've already asked unless the user did not answer it. Prefer progressing the discussion based on the most recent user message.",
+        "RECENT CONTEXT (Redis): The next messages are the latest turns from this session. Treat them as the active conversation. Do not repeat greetings. Do not re-ask a question you've already asked unless the user did not answer it. If your previous turn ended with a question and it wasn’t answered, avoid asking another; reflect briefly and move forward.",
     };
 
-    const messages: Array<{
-      role: "system" | "user" | "assistant";
-      content: string;
-    }> = [
+    const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
       ...(modeToneHint ? [{ role: "system" as const, content: modeToneHint }] : []),
       ...(phaseHint ? [{ role: "system" as const, content: phaseHint }] : []),
       { role: "system" as const, content: greetPolicy },
       { role: "system" as const, content: personaSystem },
+      { role: "system" as const, content: antiGenericVoice },
+      { role: "system" as const, content: attributionPolicy },
+      { role: "system" as const, content: precedenceRule },
       { role: "system" as const, content: userIntroLine },
+
       ...(profileLine
-        ? [
-            {
-              role: "system" as const,
-              content:
-                `User details for context: ${profileLine}. Use this to make responses personal and connected.`,
-            },
-          ]
+        ? [{ role: "system" as const, content: `User details for context: ${profileLine}. Use this to make responses personal and connected.` }]
         : []),
 
-      // 🔹 Clearly announce that recaps + LTM follow and are background
+      // Friend guardrails and mode content
+      ...(friendGuard ? [{ role: "system" as const, content: friendGuard }] : []),
+      ...(modePhilosophy ? [{ role: "system" as const, content: modePhilosophy }] : []),
+      ...(modeBehavior ? [{ role: "system" as const, content: modeBehavior }] : []),
+      ...(modeLanguage ? [{ role: "system" as const, content: modeLanguage }] : []),
+      ...(modeSamples ? [{ role: "system" as const, content: modeSamples }] : []),
+
+      // Background memory (recaps + LTM)
       memoryContextIntro,
-      // include clearly labeled past recaps (most recent first)
-      ...pastRecapMsgs,
+      ...(await (async () => {
+        let recaps: string[] = [];
+        try {
+          recaps = await redis.lrange(RECAPS_KEY(sessionId), 0, MAX_PAST_RECAPS - 1);
+          if (!recaps || recaps.length === 0) {
+            const pineRecaps = await fetchPastRecapsFromPinecone(sessionId, MAX_PAST_RECAPS);
+            recaps = pineRecaps || [];
+            if (recaps.length > 0) {
+              await redis.del(RECAPS_KEY(sessionId));
+              for (const r of recaps) await redis.rpush(RECAPS_KEY(sessionId), r);
+              await redis.ltrim(RECAPS_KEY(sessionId), -MAX_PAST_RECAPS, -1);
+            }
+          }
+        } catch {}
+        return (recaps || []).map((r, i) => ({
+          role: "system" as const,
+          content: `Past session recap ${i + 1}: ${String(r).trim().slice(0, 1200)}`,
+        }));
+      })()),
 
       { role: "system" as const, content: brevityPolicy },
       { role: "system" as const, content: selfCheck },
+      ...(friendSelfCheck ? [{ role: "system" as const, content: friendSelfCheck }] : []),
+      ...(friendExperienceGuard ? [{ role: "system" as const, content: friendExperienceGuard }] : []),
+      { role: "system" as const, content: citationSelfCheck },
       ...(stageLine ? [{ role: "system" as const, content: stageLine }] : []),
 
-      // 🔹 LTM summaries (semantic matches) — also part of BACKGROUND
+      // LTM summaries (semantic matches)
       ...((await fetchRelevantSummaries(sessionId, userText, MAX_LTM)) || []).map(
         (s: string, i: number) => ({
           role: "system" as const,
@@ -425,11 +502,11 @@ export async function POST(req: NextRequest) {
         })
       ),
 
-      // 🔹 Clearly announce that the next lines are the last few messages with the user
+      // Active conversation
       recentContextIntro,
       ...historyMsgs,
 
-      // Current message to answer
+      // Current message
       { role: "user" as const, content: userText },
     ];
 
