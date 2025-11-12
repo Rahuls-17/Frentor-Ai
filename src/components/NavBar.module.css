@@ -1,0 +1,93 @@
+/* src/components/NavBar.module.css */
+.nav {
+  position: fixed;
+  top: 0;
+  inset-inline: 0;
+  height: 56px;
+  z-index: 50;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid #e6e8eb;
+}
+
+.inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0 12px;
+}
+
+.brand {
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  color: #0b57d0;
+  text-decoration: none;
+  justify-self: start;
+}
+
+.center {
+  display: inline-flex;
+  gap: 8px;
+  justify-self: center;
+  align-items: center;
+  background: #f2f4f8;
+  border: 1px solid #e6e8eb;
+  border-radius: 12px;
+  padding: 4px;
+}
+
+.navItem {
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #1f2328;
+  text-decoration: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.navItem:hover {
+  background: #e9eef6;
+}
+
+.active {
+  background: #1663eb;
+  color: #fff;
+}
+
+.profileBtn {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid #d9dbe0;
+  background: linear-gradient(145deg, #ffffff, #f7f9fc);
+  color: #0b57d0;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.profileBtn:hover {
+  background: #0b57d0;
+  color: #fff;
+  border-color: #0b57d0;
+  box-shadow: 0 2px 6px rgba(11, 87, 208, 0.25);
+  transform: translateY(-1px);
+}
+
+.profileBtn:active {
+  transform: translateY(0);
+  background: #094cb4;
+  border-color: #094cb4;
+  color: #fff;
+}
+
+.profileIcon {
+  width: 18px;
+  height: 18px;
+}

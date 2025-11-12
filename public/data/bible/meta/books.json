@@ -1,0 +1,12 @@
+{
+  "translation": "WEB",
+  "books": [
+    {
+      "id": "john",
+      "name": "John",
+      "abbr": "Jn",
+      "testament": "NT",
+      "chapters": [{ "number": 1, "verses": 51 }]
+    }
+  ]
+}

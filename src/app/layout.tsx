@@ -1,6 +1,7 @@
 // src/app/layout.tsx
 import "./globals.css";
 import type { Metadata } from "next";
+import NavBar from "@/components/NavBar";
 
 export const metadata: Metadata = {
   title: "Frentor AI – Saint Paul Chat",
@@ -12,9 +13,13 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // Navbar height is 56px; add body padding so sticky headers don't overlap
   return (
     <html lang="en">
-      <body style={{ backgroundColor: "#f7f7f8" }}>{children}</body>
+      <body style={{ backgroundColor: "#f7f7f8", paddingTop: "56px" }}>
+        <NavBar />
+        {children}
+      </body>
     </html>
   );
 }

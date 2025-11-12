@@ -1,0 +1,247 @@
+.page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 12px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+@media (min-width: 700px) {
+  .grid {
+    grid-template-columns: 200px 1fr;
+  }
+}
+
+/* Sidebar (desktop only) */
+.sidebar {
+  border: 1px solid #e6e8eb;
+  border-radius: 12px;
+  background: #fff;
+  max-height: calc(100vh - 120px);
+  overflow: hidden;
+  position: sticky;
+  top: 68px;
+  display: none;
+}
+
+@media (min-width: 700px) {
+  .sidebar {
+    display: block;
+  }
+}
+
+.sidebarHeader {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e6e8eb;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.sidebarScroll {
+  max-height: calc(100vh - 170px);
+  overflow-y: auto;
+}
+
+.loading {
+  padding: 12px;
+  font-size: 13px;
+  color: #444;
+}
+
+.bookBtn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.bookBtnActive {
+  background: #eef3ff;
+}
+
+/* Panel */
+.panel {
+  border: 1px solid #e6e8eb;
+  border-radius: 12px;
+  background: #fff;
+  min-height: 320px;
+  overflow: hidden;
+}
+
+.panelHeader {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e6e8eb;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* Desktop controls container (right side of header) */
+.headerControls {
+  display: none;
+}
+
+@media (min-width: 700px) {
+  .headerControls {
+    display: block;
+  }
+}
+
+/* Mobile controls (book + chapter dropdowns) */
+.mobileControls {
+  display: grid;
+  grid-template-columns: 1fr 110px;
+  gap: 8px;
+  padding: 8px 12px 0 12px;
+}
+
+@media (min-width: 700px) {
+  .mobileControls {
+    display: none;
+  }
+}
+
+.select {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #d9dbe0;
+  background: #fff;
+  font-size: 14px;
+}
+
+.selectWide {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #d9dbe0;
+  background: #fff;
+  font-size: 14px;
+}
+
+/* Verses list */
+.verses {
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.verseCard {
+  padding: 12px 12px;
+  border: 1px solid #e6e8eb;
+  border-radius: 12px;
+  background: #fafbfe;
+  cursor: pointer;
+}
+
+.verseNum {
+  font-weight: 800;
+  margin-right: 8px;
+  font-size: 15px;
+}
+
+.verseText {
+  color: #222;
+  font-size: 16px;
+  line-height: 1.7;
+  letter-spacing: 0.2px;
+  word-wrap: break-word;
+}
+
+.empty {
+  color: #666;
+  font-size: 13px;
+}
+
+/* Bottom sheets */
+.sheetOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: grid;
+  align-items: end;
+  justify-items: center;
+  z-index: 60;
+  padding: 0;
+}
+
+.sheet {
+  width: 100%;
+  background: #fff;
+  border: 1px solid #e6e8eb;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  padding: 12px;
+}
+
+.sheetBottom {
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
+}
+
+@media (min-width: 700px) {
+  .sheet {
+    width: 360px;
+    border-radius: 14px;
+  }
+  .sheetBottom {
+    border-radius: 14px;
+  }
+}
+
+.sheetTitle {
+  font-weight: 800;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.sheetText {
+  font-size: 14px;
+  color: #333;
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+.sheetHint {
+  text-align: center;
+  font-size: 12px;
+  color: #777;
+  margin-top: 8px;
+}
+
+/* Buttons */
+.ctaPrimary {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #d9dbe0;
+  background: #1663eb;
+  color: #fff;
+  font-weight: 800;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.ctaSuccess {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #d9dbe0;
+  background: #0b7a44;
+  color: #fff;
+  font-weight: 800;
+  font-size: 15px;
+  cursor: pointer;
+}

@@ -1,0 +1,15 @@
+{
+  "book": "John",
+  "chapter": 1,
+  "source": "Matthew Henry (PD excerpt, sample)",
+  "notes": [
+    {
+      "range": "1",
+      "excerpt": "The Word existed from the beginning, distinct in person yet one in essence with God."
+    },
+    {
+      "range": "2-3",
+      "excerpt": "All creation owes its being to the Word; nothing came into existence apart from Him."
+    }
+  ]
+}

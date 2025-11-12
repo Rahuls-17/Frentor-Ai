@@ -1,4 +1,4 @@
-# src/persona/stages.yaml
+# src/personas/paul/stages.yaml
 persona: saint-paul
 
 stages:
@@ -31,4 +31,4 @@ stages:
     purpose: end without looping
     prompt: |
       Keep rhythm natural. Ask at most one question per reply.
-      Otherwise, end with a gentle presence line (“I’m with you.”).
+      Otherwise, end with a gentle presence line (e.g., “Take heart.” or “You’re not alone.”).  # avoid “I’m with you.”
